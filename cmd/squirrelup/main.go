@@ -17,26 +17,24 @@ import (
 )
 
 const (
-	appname = "squirrelup"
+	appname = "SquirrelUp"
 
 	usage = `Usage: %s backup_dir output_uri
-   create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
-   At the moment only BackBlaze B2 clous storage is implemented.
-`
-
-	defaultConfigFilepath = appname + ".yml"
+   Create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
+   At the moment only BackBlaze B2 cloud storage is implemented.`
 )
 
 var (
-	version string
-	commit  string
-	date    string
+	version               string
+	commit                string
+	date                  string
+	defaultConfigFilepath string
 )
 
 // return the usage string.
-func usageString() string {
+func usageString(name string) string {
 	var builder strings.Builder
-	fmt.Fprintf(&builder, usage, appname)
+	fmt.Fprintf(&builder, usage, name)
 	return builder.String()
 }
 
@@ -63,17 +61,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* handle input arguments */
 	if len(args) >= 2 {
 		if slices.ContainsFunc(args, func(arg string) bool { return (arg == "--help") || (arg == "-h") }) {
-			fmt.Fprintf(stdout, "%s\n", usageString())
+			fmt.Fprintf(stdout, "%s\n", usageString(args[0]))
 			return nil
 		}
 		if slices.ContainsFunc(args, func(arg string) bool { return (arg == "--version") || (arg == "-V") }) {
-			fmt.Printf("%s v%s %s (%s)\n", appname, version, commit, date)
+			fmt.Fprintf(stdout, "%s v%s (commit hash:%s | date:%s)\n", appname, version, commit, date)
 			return nil
 		}
 	}
 
 	if len(args) != 3 {
-		fmt.Fprintf(stdout, "%s\n", usageString())
+		fmt.Fprintf(stderr, "%s\n", usageString(args[0]))
 		return fmt.Errorf("wrong number of arguments, expecting exactly 2 arguments")
 	}
 
