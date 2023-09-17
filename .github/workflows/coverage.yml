@@ -1,18 +1,18 @@
-name: build
+name: coverage
 on: [push, pull_request]
 jobs:
   coverage:
     runs-on: ubuntu-latest
     environment: codecov
     steps:
-      - name: Install Go
+      - name: Checkout code repo
+        uses: actions/checkout@v4
+      - name: Setup Go
         uses: actions/setup-go@v4
         with:
           go-version: 1.21
-      - name: Checkout code repo
-        uses: actions/checkout@v4
       - name: Run tests and collect coverage
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic
+        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Upload coverage to Codecov
         env:
           CODECOV_TOKEN: '${{ secrets.CODECOV_TOKEN }}'
