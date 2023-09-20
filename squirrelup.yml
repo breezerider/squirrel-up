@@ -1,0 +1,7 @@
+s3:
+  region: "mock-region3"
+  id: "mock-id"
+  secret: "mock-secret"
+
+encryption:
+  pubkey: ""
