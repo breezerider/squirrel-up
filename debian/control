@@ -1,0 +1,12 @@
+Source: @NAME@
+Section: main
+Priority: optional
+Maintainer: Oleksandr Ostrenko <oleksandr@ostrenko.dev>
+Build-Depends: debhelper (>= 11), dh-golang, golang-go:native (>= 1.21.0)
+Standards-Version: 3.9.6
+
+Package: @NAME@
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Built-Using: ${misc:Built-Using}
+Description: SquirrelUp was designed to backup individual data snapshots provided as a directory, like rsnapshot backups.
