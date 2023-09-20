@@ -23,11 +23,14 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "GITHASH=$GITHASH" >> $GITHUB_ENV
           echo "GITDATE=$GITDATE" >> $GITHUB_ENV
+          echo "PACKAGE_NAME=${{ vars.PACKAGE_NAME }}" >> $GITHUB_ENV
+          echo "PACKAGE_AUTHOR=${{ vars.PACKAGE_AUTHOR }}" >> $GITHUB_ENV
+          echo "PACKAGE_EMAIL=${{ vars.PACKAGE_EMAIL }}" >> $GITHUB_ENV
       - name: Install build deps
         run: |
-          add-apt-repository ppa:longsleep/golang-backports -y
-          apt-get update
-          apt-get install --no-install-recommends -y golang-1.21 dh-make devscripts dh-make-golang dh-golang build-essential fakeroot rpm tree
+          sudo add-apt-repository ppa:longsleep/golang-backports -y
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y golang-1.21 dh-make devscripts dh-make-golang dh-golang build-essential fakeroot rpm tree
 
           mkdir -p rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           echo "%_topdir $(pwd)/rpmbuild" > ~/.rpmmacros
@@ -37,26 +40,23 @@ jobs:
           RPMCONFIGDIR=$(rpm --eval "%{_rpmconfigdir}")
           RPMMACRODIR=$(rpm --eval "%{_rpmmacrodir}")
 
-          install -m0755 golang.prov $RPMCONFIGDIR
-          install -m0755 golang.req $RPMCONFIGDIR
-          install -m0755 golang.sh $RPMCONFIGDIR
-          install -m0644 macros.go $RPMMACRODIR
+          sudo install -m0755 golang.prov $RPMCONFIGDIR
+          sudo install -m0755 golang.req $RPMCONFIGDIR
+          sudo install -m0755 golang.sh $RPMCONFIGDIR
+          sudo install -m0644 macros.go $RPMMACRODIR
           popd
       - name: Build debian package
         env:
-          PACKAGE_AUTHOR: "Oleksandr Ostrenko"
-          PACKAGE_EMAIL: "oleksandr.ostrenko@gmail.com"
-          PACKAGE_NAME: "squirrel-up"
           PACKAGE_FORMAT: "dch"
         run: |
           set -x
-          sed -e 's/@NAME@/${{ env.PACKAGE_NAME }}/' -i debian/control
-          sed -e 's/@VERSION@/${{ env.VERSION }}/' \
-              -e 's/@NAME@/${{ env.PACKAGE_NAME }}/' \
+          sed -e "s/@NAME@/$PACKAGE_NAME/" -i debian/control
+          sed -e "s/@VERSION@/$VERSION/" \
+              -e "s/@NAME@/$PACKAGE_NAME/" \
               -e "s/@HASH@/$GITHASH/" \
               -e "s/@DATE@/$GITDATE/" -i debian/rules
           mv debian/_package_name_.install debian/${PACKAGE_NAME}.install
-          sed -e 's/@NAME@/${{ env.PACKAGE_NAME }}/g' -i debian/${PACKAGE_NAME}.install
+          sed -e "s/@NAME@/$PACKAGE_NAME/g" -i debian/${PACKAGE_NAME}.install
           scripts/keepachangelog2dch-rpm.sh CHANGELOG.md > debian/changelog
 
           dpkg-buildpackage -uc -us -b
@@ -68,16 +68,14 @@ jobs:
           path: ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
       - name: Build RPM package
         env:
-          PACKAGE_AUTHOR: "Oleksandr Ostrenko"
-          PACKAGE_EMAIL: "oleksandr.ostrenko@gmail.com"
-          PACKAGE_NAME: "squirrel-up"
           PACKAGE_FORMAT: "rpm"
         run: |
+          set -x
           GITHASH=$(git rev-parse --short HEAD || echo "unknown")
           GITDATE=$(date +"%a %d %b %Y %X %Z" -d @`git log -1 --format=%ct || echo "0"`)
           scripts/clear-trailing-blanks.sh squirrelup.spec.in |
-            sed -e 's/@VERSION@/${{ env.VERSION }}/' \
-                -e 's/@NAME@/${{ env.PACKAGE_NAME }}/' \
+            sed -e "s/@VERSION@/$VERSION/" \
+                -e "s/@NAME@/$PACKAGE_NAME/" \
                 -e "s/@HASH@/$GITHASH/" \
                 -e "s/@DATE@/$GITDATE/" > squirrelup.spec
           scripts/keepachangelog2dch-rpm.sh CHANGELOG.md >> squirrelup.spec
@@ -95,14 +93,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-deb-rpm]
     environment: release
+    permissions:
+      contents: write
     steps:
       - name: Write release version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          echo "Building Version: $VERSION"
+          echo "Creating Release for Version: $VERSION"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "PACKAGE_NAME=${{ vars.PACKAGE_NAME }}" >> $GITHUB_ENV
       - name: Checkout code repo
         uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y tree
       - name: Extract section of the changelog
         id: extract-changelog
         uses: sean0x42/markdown-extract@v2
@@ -123,41 +128,25 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: deb-package
-          path: ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
+          path: .
       - name: Download RPM package from artifacts
         uses: actions/download-artifact@v3
         with:
           name: rpm-package
-          path: ${{ env.PACKAGE_NAME }}-${{ env.VERSION }}-0.x86_64.rpm.gz
+          path: .
       - name: Uncompress RPM package
         run: |
+          tree
           gunzip ${PACKAGE_NAME}-${VERSION}-0.x86_64.rpm.gz
       - name: Create a release
-        uses: actions/create-release@v1
-        id: create_release
+        uses: softprops/action-gh-release@v1
         with:
           draft: false
           prerelease: false
-          release_name: ${{ github.ref_name }}
           tag_name: ${{ github.ref }}
           body_path: changelog.md
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: Upload debian package as release artifact
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
-          asset_name: ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
-          asset_content_type: application/octet-stream
-      - name: Upload RPM package as release artifact
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ env.PACKAGE_NAME }}-${{ env.VERSION }}-0.x86_64.rpm
-          asset_name: ${{ env.PACKAGE_NAME }}-${{ env.VERSION }}-0.x86_64.rpm
-          asset_content_type: application/octet-stream
+          token: ${{ github.token }}
+          fail_on_unmatched_files: true
+          files: |
+            ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
+            ${{ env.PACKAGE_NAME }}-${{ env.VERSION }}-0.x86_64.rpm
