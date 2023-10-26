@@ -114,7 +114,7 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 	return result, nil
 }
 
-// StoreFile writes a data from `input` to output URI.
+// StoreFile writes data from `input` to output URI.
 // Output URI must follow the pattern: b2://bucket/path/to/key.
 func (b2 *B2Backend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
 	var bucket string = uri.Host
@@ -125,6 +125,24 @@ func (b2 *B2Backend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
 		Bucket: aws.String(bucket),
 		Key:    aws.String(prefix),
 		Body:   aws.ReadSeekCloser(input),
+	})
+
+	if err != nil {
+		return handleError(err)
+	}
+	return nil
+}
+
+// RemoveFile removes an object under the given URI.
+// Object URI must follow the pattern: b2://bucket/path/to/key.
+func (b2 *B2Backend) RemoveFile(uri *url.URL) error {
+	var bucket string = uri.Host
+	var prefix string = strings.TrimPrefix(uri.Path, "/")
+
+	// upload reader contents to S3 bucket as an object with the given key
+	_, err := b2.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(prefix),
 	})
 
 	if err != nil {

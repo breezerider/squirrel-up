@@ -87,6 +87,16 @@ func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput,
 	return nil, nil
 }
 
+func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+	switch *input.Key {
+	case "valid/key":
+		return &s3.DeleteObjectOutput{}, nil
+	case "invalid/key":
+		return &s3.DeleteObjectOutput{}, awserr.New("NotFound", "", nil)
+	}
+	return nil, nil
+}
+
 /* test cases for CreateB2Backend */
 func TestCreateB2Backend(t *testing.T) {
 	cfg := new(Config)
@@ -272,6 +282,45 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 
 	// Perform the test
 	err = mockB2.StoreFile(nil, mockURI)
+
+	if err == nil {
+		t.Fatalf("unexpected test result: no error returned")
+	} else {
+		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
+	}
+}
+
+/* test cases for B2Backend.RemoveFile */
+func TestB2RemoveFileValidKey(t *testing.T) {
+	// Setup Test
+	mockB2 := &B2Backend{
+		&mockS3Client{},
+	}
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/key")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	err = mockB2.RemoveFile(mockURI)
+
+	if err != nil {
+		t.Fatalf("unexpected test result: %+v", err)
+	}
+}
+
+func TestB2RemoveFileInvalidKey(t *testing.T) {
+	// Setup Test
+	mockB2 := &B2Backend{
+		&mockS3Client{},
+	}
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/key")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	err = mockB2.RemoveFile(mockURI)
 
 	if err == nil {
 		t.Fatalf("unexpected test result: no error returned")
