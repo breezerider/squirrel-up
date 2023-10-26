@@ -74,7 +74,10 @@ fmt:
 test:
 	@mkdir -p ${PWD}/.go-build ${PWD}/.go-mod
 	@docker run --rm \
+		--user $(shell id -u):$(shell id -g) \
 		-v ${PWD}:/project \
+		-v ${PWD}/.go-build:/.cache/go-build \
+		-v ${PWD}/.go-mod:/go/pkg/mod \
 		-w /project \
 		golang:${GO_VERSION} \
 			go test \
@@ -95,8 +98,9 @@ test:
 build:
 	@mkdir -p ${PWD}/.go-build ${PWD}/.go-mod
 	@docker run --rm \
+		--user $(shell id -u):$(shell id -g) \
 		-v ${PWD}:/project \
-		-v ${PWD}/.go-build:/root/.cache/go-build \
+		-v ${PWD}/.go-build:/.cache/go-build \
 		-v ${PWD}/.go-mod:/go/pkg/mod \
 		-w /project \
 		-e GOOS=${GOOS} \
