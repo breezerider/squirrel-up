@@ -12,6 +12,20 @@ func assertEquals(t *testing.T, expected any, actual any, description string) {
 	}
 }
 
+/* test cases for FileInfo */
+func TestFileInfo(t *testing.T) {
+	fileinfo := FileInfo{
+		name:     "path/to/file",
+		size:     uint64(0),
+		modified: time.Unix(0, 0).UTC(),
+	}
+
+	assertEquals(t, "path/to/file", fileinfo.Name(), "fileinfo.Name")
+	assertEquals(t, uint64(0), fileinfo.Size(), "fileinfo.Size")
+	assertEquals(t, time.Unix(0, 0).UTC(), fileinfo.Modified(), "fileinfo.Modified")
+
+}
+
 /* test cases for CreateStorageBackend */
 func TestCreateStorageBackendDummy(t *testing.T) {
 	cfg := new(Config)
@@ -115,6 +129,36 @@ func TestDummyListFiles(t *testing.T) {
 	}
 }
 
+func TestDummyListFilesMock(t *testing.T) {
+	// Setup Test
+	dummy := &DummyBackend{}
+	mockURI, err := url.ParseRequestURI("dummy://path/to/dir")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// setup test
+	dummyFiles := GenerateDummyFiles("to/dir/", 2)
+
+	// Perform the test
+	filelist, err := dummy.ListFiles(mockURI)
+
+	if filelist == nil || err != nil {
+		t.Fatalf("unexpected test result: %+v, %+v", filelist, err)
+	} else {
+		assertEquals(t, 2, len(filelist), "len(filelist)")
+
+		for index, fileinfo := range filelist {
+			assertEquals(t, dummyFiles[index].Name(), fileinfo.Name(), "fileinfo.name")
+			assertEquals(t, dummyFiles[index].Size(), fileinfo.Size(), "fileinfo.size")
+			assertEquals(t, dummyFiles[index].Modified(), fileinfo.Modified(), "fileinfo.modified")
+		}
+	}
+
+	// cleanup
+	GenerateDummyFiles("", 0)
+}
+
 /* test cases for DummyBackend.StoreFile */
 func TestDummyStoreFile(t *testing.T) {
 	// Setup Test
@@ -126,6 +170,23 @@ func TestDummyStoreFile(t *testing.T) {
 
 	// Perform the test
 	err = mockB2.StoreFile(nil, mockURI)
+
+	if err != nil {
+		t.Fatalf("unexpected test result: %+v", err)
+	}
+}
+
+/* test cases for DummyBackend.RemoveFile */
+func TestDummyRemoveFile(t *testing.T) {
+	// Setup Test
+	mockB2 := &DummyBackend{}
+	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	err = mockB2.RemoveFile(mockURI)
 
 	if err != nil {
 		t.Fatalf("unexpected test result: %+v", err)
