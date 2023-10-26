@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"log"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/breezerider/squirrel-up/pkg/common"
@@ -19,10 +20,30 @@ import (
 const (
 	appname = "SquirrelUp"
 
-	usage = `Usage: %s backup_dir output_uri
-   Create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
-   At the moment only BackBlaze B2 cloud storage is implemented.`
+	usage = `Usage: %s <backup_dir> <output_prefix_uri>
+    Create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
+    At the moment only BackBlaze B2 cloud storage is implemented.
+
+Required arguments:
+    <backup_dir>                  Path to local directory that serves as backup root.
+    <output_prefix_uri>           Remote URI prefix.
+
+Optional arguments:
+    --config, -c <config_file>    Path to local config file.
+    --verbose, -v                 Verbose output.
+
+BackBlaze B2 Backend:
+    <output_prefix_uri> must follow the pattern 'b2://<bucket>/<path>/<to>/<prefix>/'.
+
+Default configuration is stored under %s.
+`
 )
+
+type CLI struct {
+	Verbose        bool
+	ConfigFilepath string
+	PositionalArgs []string
+}
 
 var (
 	version               string
@@ -34,7 +55,7 @@ var (
 // return the usage string.
 func usageString(name string) string {
 	var builder strings.Builder
-	fmt.Fprintf(&builder, usage, name)
+	fmt.Fprintf(&builder, usage, name, defaultConfigFilepath)
 	return builder.String()
 }
 
@@ -59,24 +80,56 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* handle input arguments */
+	var cli_args CLI
+
 	if len(args) >= 2 {
-		if slices.ContainsFunc(args, func(arg string) bool { return (arg == "--help") || (arg == "-h") }) {
-			fmt.Fprintf(stdout, "%s\n", usageString(args[0]))
-			return nil
+		// config
+		var storeConfig bool = false
+
+		for _, arg := range args[1:] {
+			if storeConfig {
+				cli_args.ConfigFilepath = arg
+				storeConfig = false
+				continue
+			}
+
+			switch arg {
+			case "--help", "-h":
+				fmt.Fprintf(stdout, "%s\n", usageString(args[0]))
+				return nil
+			case "--version", "-V":
+				fmt.Fprintf(stdout, "%s v%s (commit hash:%s | date:%s)\n", appname, version, commit, date)
+				return nil
+			case "--verbose", "-v":
+				cli_args.Verbose = true
+			case "--config", "-c":
+				storeConfig = true
+			default:
+				if strings.HasPrefix(arg, "-") {
+					return fmt.Errorf("unrecognize command line option '%s'", arg)
+				}
+
+				if len(cli_args.PositionalArgs) >= 2 {
+					cli_args.PositionalArgs = append(cli_args.PositionalArgs, "")
+					break
+				}
+
+				cli_args.PositionalArgs = append(cli_args.PositionalArgs, arg)
+			}
 		}
-		if slices.ContainsFunc(args, func(arg string) bool { return (arg == "--version") || (arg == "-V") }) {
-			fmt.Fprintf(stdout, "%s v%s (commit hash:%s | date:%s)\n", appname, version, commit, date)
-			return nil
+
+		if storeConfig {
+			return fmt.Errorf("invalid use of the configuration switch, must provide a value")
 		}
 	}
 
-	if len(args) != 3 {
+	if len(cli_args.PositionalArgs) != 2 {
 		fmt.Fprintf(stderr, "%s\n", usageString(args[0]))
-		return fmt.Errorf("wrong number of arguments, expecting exactly 2 arguments")
+		return fmt.Errorf("wrong number of arguments, expecting exactly 2 positional arguments")
 	}
 
 	// process first input argument
-	var inputDirectory string = args[1]
+	var inputDirectory string = cli_args.PositionalArgs[0]
 	if isDir, err := isDirectory(inputDirectory); !isDir {
 		if err != nil {
 			return fmt.Errorf("first argument must be a valid directory path: %s", err.Error())
@@ -86,7 +139,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	// process second input argument
-	outputUri, err := url.ParseRequestURI(args[2])
+	outputPrefixUri, err := url.ParseRequestURI(cli_args.PositionalArgs[1])
 	if err != nil {
 		return fmt.Errorf("could not parse output URI: %s", err.Error())
 	}
@@ -94,31 +147,60 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* load configuration */
 	var cfg common.Config
 
-	err = initConfig(&cfg)
+	if len(cli_args.ConfigFilepath) == 0 {
+		cli_args.ConfigFilepath = defaultConfigFilepath
+	}
+	err = initConfig(&cfg, cli_args.ConfigFilepath, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("%s", err.Error())
 	}
 
 	/* initialize the backend */
-	backend, err := common.CreateStorageBackend(outputUri, &cfg)
+	backend, err := common.CreateStorageBackend(outputPrefixUri, &cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create backend: %s", err.Error())
 	}
 
-	fileinfo, err := backend.GetFileInfo(outputUri)
+	/* validate output URI */
+	// fileinfo, err := backend.GetFileInfo(outputPrefixUri)
+	// if err != nil {
+	// 	if err.Error() == common.ErrFileNotFound {
+	// 		fmt.Fprintf(stderr, "file %q not found\n", outputPrefixUri)
+	// 	} else {
+	// 		return fmt.Errorf("backend operation failed: %s", err.Error())
+	// 	}
+	// } else {
+	// 	fmt.Fprintf(stdout, "file info: %+v\n", *fileinfo)
+	// }
+
+	/* list prefix contents */
+	filelist, err := backend.ListFiles(outputPrefixUri)
 	if err != nil {
-		if err.Error() == common.ErrFileNotFound {
-			log.Printf("File %q not found\n", outputUri)
-		} else {
-			return fmt.Errorf("backend operation failed: %s", err.Error())
+		return fmt.Errorf("could not list remote files: %s", err.Error())
+	}
+
+	/* remove old files */
+	if cfg.Backup.Hours > 0.0 {
+		timeNow := time.Now()
+		for _, fileinfo := range filelist {
+			diff := timeNow.Sub(fileinfo.Modified())
+			fmt.Fprintf(stderr, "file %s, time diff = %.0f h\n", fileinfo.Name(), diff.Hours())
+			if diff.Hours() >= cfg.Backup.Hours {
+				relativeUri, err := outputPrefixUri.Parse(fileinfo.Name())
+				if err == nil {
+					fmt.Fprintf(stdout, "removing file %q\n", relativeUri)
+					err = backend.RemoveFile(relativeUri)
+				}
+				if err != nil {
+					fmt.Fprintf(stderr, "could not remove remote files: %s\n", err.Error())
+				}
+			}
 		}
-	} else {
-		log.Printf("File info: %+v\n", *fileinfo)
 	}
 
 	/* initialize encryption */
 	var recipients []age.Recipient
-	recipients, err = initEncryption(&cfg)
+	recipients, err = initEncryption(&cfg, stdout, stderr)
 	if err != nil {
 		return fmt.Errorf("%s", err.Error())
 	}
@@ -127,58 +209,87 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var outputArchivePath string
 	outputArchivePath, err = archiveDirectory(inputDirectory)
 	if err != nil {
+		_ = os.Remove(outputArchivePath)
 		return fmt.Errorf("%s", err.Error())
 	}
 
 	/* encrypt the output file */
 	var outputEncryptedPath string
 	if len(recipients) > 0 {
-		log.Printf("recipients: %+v\n", recipients)
-		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients)
+		fmt.Fprintf(stderr, "recipients: %+v\n", recipients)
+		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, stdout, stderr)
 		if err != nil {
+			_ = os.Remove(outputArchivePath)
+			_ = os.Remove(outputEncryptedPath)
 			return fmt.Errorf("%s", err.Error())
 		}
 	} else {
-		log.Printf("no pubkey found, encryption disabled\n")
+		// report no pubkey
+		fmt.Fprintf(stderr, "no pubkey found, encryption disabled\n")
 		outputEncryptedPath = outputArchivePath
 	}
 
 	/* store output file */
+	var errorMessage string
 	outputFile, err := os.Open(filepath.Clean(outputEncryptedPath))
 	if err == nil {
-		err = backend.StoreFile(io.ReadSeekCloser(outputFile), outputUri)
+		relativeUri, err := outputPrefixUri.Parse(time.Now().Format(cfg.Backup.Name) + ".tar.gz")
+		if err == nil {
+			err = backend.StoreFile(io.ReadSeekCloser(outputFile), relativeUri)
+			if err == nil {
+				// report progress
+				fmt.Fprintf(stdout, "wrote %q to %q\n", inputDirectory, relativeUri)
+			}
+		}
 		if err != nil {
-			// Print the error and exit.
-			log.Fatalf("Unable to write %q to %q, %v", inputDirectory, outputUri, err)
-		} else {
-			// Print the error and exit.
-			log.Printf("Wrote %q to %q", inputDirectory, outputUri)
+			errorMessage = fmt.Sprintf("unable to write %q to %q: %s", inputDirectory, relativeUri, err.Error())
 		}
 	} else {
-		return fmt.Errorf("could not open output file: %s", err.Error())
+		errorMessage = fmt.Sprintf("could not open output file: %s", err.Error())
 	}
+
+	/* clean up */
 	_ = outputFile.Close()
 	_ = os.Remove(outputArchivePath)
 	_ = os.Remove(outputEncryptedPath)
 
+	if err != nil {
+		return fmt.Errorf(errorMessage)
+	}
+
 	return nil
 }
 
-func initConfig(cfg *common.Config) error {
-	configFile, err := os.Open(defaultConfigFilepath)
-	if err == nil {
-		err = common.LoadConfigFromFile(cfg, configFile)
+func initConfig(cfg *common.Config, cfgFilepath string, stdout, stderr io.Writer) error {
+	var err error
+
+	err = cfg.SetDefaultValues()
+	if err != nil {
+		return fmt.Errorf("could set default configuration values: %s", err.Error())
 	}
-	_ = configFile.Close()
+
+	if len(cfgFilepath) > 0 {
+		var configFile *os.File
+		configFile, err = os.Open(filepath.Clean(cfgFilepath))
+		if err == nil {
+			fmt.Fprintf(stderr, "loading configuration from %s\n", filepath.Clean(cfgFilepath))
+			err = cfg.LoadConfigFromFile(configFile)
+			_ = configFile.Close()
+		}
+	} else {
+		fmt.Fprintf(stderr, "default configuration path is empty\n")
+		err = nil
+	}
 
 	if err != nil && err != io.EOF {
-		if os.IsNotExist(err) {
-			log.Printf("configuration file %s does not exists", defaultConfigFilepath)
+		if errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintf(stderr, "configuration file %s does not exist\n", cfgFilepath)
 		} else {
-			return fmt.Errorf("could not load configuration from %s: %s", defaultConfigFilepath, err.Error())
+			return fmt.Errorf("could not load configuration from %s: %s", cfgFilepath, err.Error())
 		}
 	}
-	err = common.LoadConfigFromEnv(cfg)
+
+	err = cfg.LoadConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("could not load configuration from environment: %s", err.Error())
 	}
@@ -186,14 +297,14 @@ func initConfig(cfg *common.Config) error {
 	return nil
 }
 
-func initEncryption(cfg *common.Config) ([]age.Recipient, error) {
+func initEncryption(cfg *common.Config, stdout, stderr io.Writer) ([]age.Recipient, error) {
 	var recipients []age.Recipient
 
 	if len(cfg.Encryption.Pubkey) > 0 {
 		if r, err := age.ParseX25519Recipient(cfg.Encryption.Pubkey); err == nil {
 			recipients = append(recipients, r)
 		} else {
-			log.Printf("pubkey parsing failed, assuming it is path to file")
+			fmt.Fprintf(stderr, "pubkey parsing failed, assuming it is path to file\n")
 
 			pubkeyFile, err := os.Open(cfg.Encryption.Pubkey)
 			if err != nil {
@@ -244,7 +355,7 @@ func archiveDirectory(dirPath string) (string, error) {
 	return tmp.Name(), nil
 }
 
-func encryptFile(filePath string, recipients []age.Recipient) (string, error) {
+func encryptFile(filePath string, recipients []age.Recipient, stdout, stderr io.Writer) (string, error) {
 	// open input file
 	input, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
@@ -267,8 +378,8 @@ func encryptFile(filePath string, recipients []age.Recipient) (string, error) {
 	numWritten, err := io.Copy(encryptedWriter, input)
 	if err != nil {
 		return "", fmt.Errorf("could not write file '%s' to encrypted file '%s': %s", input.Name(), tmp.Name(), err.Error())
-	} else {
-		log.Printf("%d bytes written\n", numWritten)
+	} else if numWritten == 0 {
+		return "", fmt.Errorf("zero bytes written to encrypted archive")
 	}
 	_ = encryptedWriter.Close()
 
