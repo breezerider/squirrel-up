@@ -17,6 +17,12 @@ import (
 	"github.com/mholt/archiver/v4"
 )
 
+type cliArgs struct {
+	Verbose        bool
+	ConfigFilepath string
+	PositionalArgs []string
+}
+
 const (
 	appname = "SquirrelUp"
 
@@ -38,12 +44,6 @@ BackBlaze B2 Backend:
 Default configuration is stored under %s.
 `
 )
-
-type CLI struct {
-	Verbose        bool
-	ConfigFilepath string
-	PositionalArgs []string
-}
 
 var (
 	version               string
@@ -80,52 +80,13 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* handle input arguments */
-	var cli_args CLI
+	var cli_args cliArgs
+	var err error
 
-	if len(args) >= 2 {
-		// config
-		var storeConfig bool = false
-
-		for _, arg := range args[1:] {
-			if storeConfig {
-				cli_args.ConfigFilepath = arg
-				storeConfig = false
-				continue
-			}
-
-			switch arg {
-			case "--help", "-h":
-				fmt.Fprintf(stdout, "%s\n", usageString(args[0]))
-				return nil
-			case "--version", "-V":
-				fmt.Fprintf(stdout, "%s v%s (commit hash:%s | date:%s)\n", appname, version, commit, date)
-				return nil
-			case "--verbose", "-v":
-				cli_args.Verbose = true
-			case "--config", "-c":
-				storeConfig = true
-			default:
-				if strings.HasPrefix(arg, "-") {
-					return fmt.Errorf("unrecognize command line option '%s'", arg)
-				}
-
-				if len(cli_args.PositionalArgs) >= 2 {
-					cli_args.PositionalArgs = append(cli_args.PositionalArgs, "")
-					break
-				}
-
-				cli_args.PositionalArgs = append(cli_args.PositionalArgs, arg)
-			}
-		}
-
-		if storeConfig {
-			return fmt.Errorf("invalid use of the configuration switch, must provide a value")
-		}
-	}
-
-	if len(cli_args.PositionalArgs) != 2 {
-		fmt.Fprintf(stderr, "%s\n", usageString(args[0]))
-		return fmt.Errorf("wrong number of arguments, expecting exactly 2 positional arguments")
+	if terminate, err := parseArgs(args, &cli_args, stdout, stderr); err != nil {
+		return fmt.Errorf("%s", err.Error())
+	} else if terminate {
+		return nil
 	}
 
 	// process first input argument
@@ -260,6 +221,55 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	return nil
+}
+
+func parseArgs(args []string, cli_args *cliArgs, stdout, stderr io.Writer) (bool, error) {
+	var storeConfig bool = false
+	var positionalArgs []string = []string { }
+
+	argsLoop:for _, arg := range args[1:] {
+		if storeConfig {
+			cli_args.ConfigFilepath = arg
+			storeConfig = false
+			continue
+		}
+
+		if strings.HasPrefix(arg, "-") {
+			switch arg {
+			case "--help", "-h":
+				fmt.Fprintf(stdout, "%s\n", usageString(args[0]))
+				return true, nil
+			case "--version", "-V":
+				fmt.Fprintf(stdout, "%s v%s (commit hash:%s | date:%s)\n", appname, version, commit, date)
+				return true, nil
+			case "--verbose", "-v":
+				cli_args.Verbose = true
+			case "--config", "-c":
+				storeConfig = true
+			default:
+				return true, fmt.Errorf("unrecognize command line option '%s'", arg)
+			}
+		} else {
+			positionalArgs = append(positionalArgs, arg)
+
+			if len(positionalArgs) > 2 {
+				break argsLoop
+			}
+		}
+	}
+
+	if storeConfig {
+		return true, fmt.Errorf("invalid use of the configuration switch, must provide a value")
+	}
+
+	if len(positionalArgs) != 2 {
+		fmt.Fprintf(stderr, "%s\n", usageString(args[0]))
+		return true, fmt.Errorf("wrong number of arguments, expecting exactly 2 positional arguments")
+	} else {
+		cli_args.PositionalArgs = positionalArgs
+	}
+
+	return false, nil
 }
 
 func initConfig(cfg *common.Config, cfgFilepath string, stdout, stderr io.Writer) error {
