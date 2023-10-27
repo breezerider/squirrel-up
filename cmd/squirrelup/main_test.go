@@ -376,7 +376,7 @@ no pubkey found, encryption disabled
 
 		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
 removing file "dummy://path/to/dir/to/dir/B"
-wrote "." to "dummy://path/to/dir/%s.tar.gz"
+wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 file to/dir/A, time diff = %.0f h
@@ -409,7 +409,7 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 
 		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
 removing file "dummy://path/to/dir/to/dir/B"
-wrote "." to "dummy://path/to/dir/%s.tar.gz"
+wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 file to/dir/A, time diff = %.0f h
@@ -445,7 +445,7 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 
 		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
 removing file "dummy://path/to/dir/to/dir/B"
-wrote "." to "dummy://path/to/dir/%s.tar.gz"
+wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
 file to/dir/A, time diff = %.0f h
@@ -471,7 +471,7 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 
 		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
 removing file "dummy://path/to/dir/to/dir/B"
-wrote "." to "dummy://path/to/dir/%s.tar.gz"
+wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
 file to/dir/A, time diff = %.0f h

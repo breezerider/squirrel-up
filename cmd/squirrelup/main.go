@@ -214,7 +214,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	/* encrypt the output file */
-	var outputEncryptedPath string
+	var outputEncryptedPath, outputFileExtension string
 	if len(recipients) > 0 {
 		fmt.Fprintf(stderr, "recipients: %+v\n", recipients)
 		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, stdout, stderr)
@@ -223,17 +223,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			_ = os.Remove(outputEncryptedPath)
 			return fmt.Errorf("%s", err.Error())
 		}
+		outputFileExtension = ".tar.gz.age"
 	} else {
 		// report no pubkey
 		fmt.Fprintf(stderr, "no pubkey found, encryption disabled\n")
 		outputEncryptedPath = outputArchivePath
+		outputFileExtension = ".tar.gz"
 	}
 
 	/* store output file */
 	var errorMessage string
 	outputFile, err := os.Open(filepath.Clean(outputEncryptedPath))
 	if err == nil {
-		relativeUri, err := outputPrefixUri.Parse(time.Now().Format(cfg.Backup.Name) + ".tar.gz")
+		relativeUri, err := outputPrefixUri.Parse(time.Now().Format(cfg.Backup.Name) + outputFileExtension)
 		if err == nil {
 			err = backend.StoreFile(io.ReadSeekCloser(outputFile), relativeUri)
 			if err == nil {
