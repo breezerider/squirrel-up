@@ -72,13 +72,6 @@ func TestMainHelp(t *testing.T) {
 		t.Fatalf(err.Error())
 	}
 
-	// fmt.Println("stdout")
-	// fmt.Println(stdout.String())
-	// fmt.Println("stderr")
-	// fmt.Println(stderr.String())
-	// fmt.Println("expected stdout")
-	// fmt.Println(expected_stdout)
-
 	assertEquals(t, expected_stdout, stdout.String(), "TestMainHelp.stdout")
 	assertEquals(t, 0, len(stderr.String()), "TestMainHelp.stderr")
 }
@@ -262,12 +255,6 @@ func TestMainInvalidEncryptionConfig(t *testing.T) {
 	} else {
 		t.Fatalf("initEncryption was supposed to fail, return values: %v, %v\n", recepients, err)
 	}
-
-	// fmt.Println("stdout")
-	// fmt.Println(stdout.String())
-	// fmt.Println("stderr")
-	// fmt.Println(stderr.String())
-	// t.Fatalf("TestMainInvalidEncryptionConfig\n")
 }
 
 func TestMainInvalidConfig(t *testing.T) {
@@ -291,11 +278,6 @@ func TestMainInvalidConfig(t *testing.T) {
 
 	// invalid config file: /dev/null
 	if err := initConfig(&cfg, "/dev/null", io.Writer(&stdout), io.Writer(&stderr)); err != nil {
-		fmt.Println("stdout")
-		fmt.Println(stdout.String())
-		fmt.Println("stderr")
-		fmt.Println(stderr.String())
-
 		assertEquals(t, `could not load configuration from /dev/null: LoadConfigFromFile failed: EOF`, err.Error(), "TestMainInvalidConfig.Error")
 		assertEquals(t, 0, len(stdout.String()), "TestMainInvalidConfig.stdout")
 		assertEquals(t, `loading configuration from /dev/null
@@ -351,15 +333,15 @@ func TestMainRun(t *testing.T) {
 	} else {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
-		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
-removing file "dummy://path/to/dir/to/dir/B"
+		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/A"
+removing file "dummy://path/to/dir/B"
 wrote "." to "dummy://path/to/dir/%s.tar.gz"
-`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
+`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 no pubkey found, encryption disabled
-`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainInvalidConfig.stderr")
+`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
 	// clean up
@@ -374,15 +356,15 @@ no pubkey found, encryption disabled
 	} else {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
-		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
-removing file "dummy://path/to/dir/to/dir/B"
+		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/A"
+removing file "dummy://path/to/dir/B"
 wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
-`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
+`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
-`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainInvalidConfig.stderr")
+`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
 	// clean up
@@ -407,16 +389,16 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 	} else {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
-		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
-removing file "dummy://path/to/dir/to/dir/B"
+		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/A"
+removing file "dummy://path/to/dir/B"
 wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
-`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
+`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 pubkey parsing failed, assuming it is path to file
 recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
-`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainInvalidConfig.stderr")
+`, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
 	// clean up
@@ -443,15 +425,15 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 	} else {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
-		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
-removing file "dummy://path/to/dir/to/dir/B"
+		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/A"
+removing file "dummy://path/to/dir/B"
 wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
-`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
+`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
-`, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainInvalidConfig.stderr")
+`, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
 	// clean up
@@ -463,22 +445,24 @@ recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 		t.Fatalf("could not write to temporary file: %s", err.Error())
 	}
 
+	args = []string{appname, ".", "--config", tmpCfg.Name(), "dummy://path/to/dir/"}
+
 	err = run(args, nil, io.Writer(&stdout), io.Writer(&stderr))
 	if err != nil {
 		t.Fatalf(err.Error())
 	} else {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
-		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/to/dir/A"
-removing file "dummy://path/to/dir/to/dir/B"
+		assertEquals(t, fmt.Sprintf(`removing file "dummy://path/to/dir/A"
+removing file "dummy://path/to/dir/B"
 wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
-`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainInvalidConfig.stdout")
+`, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 pubkey parsing failed, assuming it is path to file
 recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
-`, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainInvalidConfig.stderr")
+`, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
 	// clean up

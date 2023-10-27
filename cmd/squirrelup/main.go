@@ -147,7 +147,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 			diff := timeNow.Sub(fileinfo.Modified())
 			fmt.Fprintf(stderr, "file %s, time diff = %.0f h\n", fileinfo.Name(), diff.Hours())
 			if diff.Hours() >= cfg.Backup.Hours {
-				relativeUri, err := outputPrefixUri.Parse(fileinfo.Name())
+				relativeUri, err := outputPrefixUri.Parse("/" + fileinfo.Name())
 				if err == nil {
 					fmt.Fprintf(stdout, "removing file %q\n", relativeUri)
 					err = backend.RemoveFile(relativeUri)
