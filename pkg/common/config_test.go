@@ -2,8 +2,21 @@ package common
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+)
+
+type (
+	mockStruct1 struct {
+		field int `default:"0"`
+	}
+
+	mockStruct2 struct {
+		mockSubstruct struct {
+			field int `default:"0"`
+		}
+	}
 )
 
 /* test cases for SetDefaultValues */
@@ -33,6 +46,25 @@ func TestSetDefaultValuesInvalid(t *testing.T) {
 		t.Fatalf("This test should throw an error")
 	} else {
 		assertEquals(t, "SetDefaultValues called on a nil pointer", err.Error(), "err.Error")
+	}
+}
+
+func TestSetDefaultValuesStructInvalid(t *testing.T) {
+	var tmp1 mockStruct1
+	var tmp2 mockStruct2
+
+	valueof := reflect.ValueOf(tmp1)
+	if err := setDefaultValuesStruct(valueof); err == nil {
+		t.Fatalf("This test should throw an error")
+	} else {
+		assertEquals(t, "setDefaultValueField called with an unsupported value of kind 'int'", err.Error(), "err.Error")
+	}
+
+	valueof = reflect.ValueOf(tmp2)
+	if err := setDefaultValuesStruct(valueof); err == nil {
+		t.Fatalf("This test should throw an error")
+	} else {
+		assertEquals(t, "setDefaultValueField called with an unsupported value of kind 'int'", err.Error(), "err.Error")
 	}
 }
 

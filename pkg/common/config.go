@@ -47,10 +47,9 @@ func setDefaultValueField(valueof reflect.Value, tag string) error {
 		if floatValue, err := strconv.ParseFloat(tag, 64); err == nil {
 			valueof.SetFloat(floatValue)
 		}
-		// Add cases for other types if needed
-		// default:
-		// 	fmt.Printf("unknown\n")
-		// 	return fmt.Errorf("setDefaultValueField called with an unsupported value of kind '%v'", valueof.Kind())
+	// Add cases for other types if needed
+	default:
+		return fmt.Errorf("setDefaultValueField called with an unsupported value of kind '%v'", valueof.Kind())
 	}
 
 	return nil
