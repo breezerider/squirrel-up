@@ -225,9 +225,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 func parseArgs(args []string, cli_args *cliArgs, stdout, stderr io.Writer) (bool, error) {
 	var storeConfig bool = false
-	var positionalArgs []string = []string { }
+	var positionalArgs []string = []string{}
 
-	argsLoop:for _, arg := range args[1:] {
+argsLoop:
+	for _, arg := range args[1:] {
 		if storeConfig {
 			cli_args.ConfigFilepath = arg
 			storeConfig = false
