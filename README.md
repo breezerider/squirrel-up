@@ -13,9 +13,22 @@ Then it will store the output file to a storage backen (currently only BackBlaze
 
 ```shell
 $ squirrelup
-Usage: squirrelup backup_dir output_uri
-   create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
-   At the moment only BackBlaze B2 cloud storage is implemented.
+Usage: squirrelup <backup_dir> <output_prefix_uri>
+    Create an (optionally) encrypted gzip-compressed TAR file and upload it to storage backend.
+    At the moment only BackBlaze B2 cloud storage is implemented.
+
+Required arguments:
+    <backup_dir>                  Path to local directory that serves as backup root.
+    <output_prefix_uri>           Remote URI prefix.
+
+Optional arguments:
+    --config, -c <config_file>    Path to local config file.
+    --verbose, -v                 Verbose output.
+
+BackBlaze B2 Backend:
+    <output_prefix_uri> must follow the pattern 'b2://<bucket>/<path>/<to>/<prefix>/'.
+
+Default configuration is stored under <config_path>.
 ```
 
 ## Requirements
@@ -29,6 +42,14 @@ Build squirrelup by running:
 
 ```shell
 make build
+```
+
+## Test
+
+Run the test suite for squirrelup by running:
+
+```shell
+make test
 ```
 
 ## Acknowledgements
