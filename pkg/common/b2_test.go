@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -11,18 +12,67 @@ import (
 )
 
 // Define a mock struct for S3 Client.
-type mockS3Client struct {
-	s3iface.S3API
-}
+type (
+	mockS3Client struct {
+		s3iface.S3API
+	}
+
+	mockB2ObjectInfo struct {
+		ContentLength int64
+		LastModified  time.Time
+		VersionId     string
+	}
+
+	mockB2KeyInfo struct {
+		Key          string
+		Size         int64
+		LastModified time.Time
+	}
+)
+
+var (
+	expected_keys = map[string]mockB2ObjectInfo{
+		"valid/key": mockB2ObjectInfo{
+			ContentLength: 0,
+			LastModified:  time.Unix(0, 0).UTC(),
+			VersionId:     "valid-key-version",
+		},
+		"invalid/key/size": mockB2ObjectInfo{
+			ContentLength: -1,
+			LastModified:  time.Unix(1, 0).UTC(),
+			VersionId:     "invalid-key-size-version",
+		},
+		"valid/undeleteable/key": mockB2ObjectInfo{
+			ContentLength: 0,
+			LastModified:  time.Unix(2, 0).UTC(),
+			VersionId:     "valid-undeletable-key-version",
+		},
+	}
+
+	expected_prefixes = map[string][]mockB2KeyInfo{
+		"valid/prefix": []mockB2KeyInfo{
+			mockB2KeyInfo{
+				Key:          "valid/prefix/key1",
+				Size:         1,
+				LastModified: time.Unix(1, 0).UTC(),
+			},
+			mockB2KeyInfo{
+				Key:          "valid/prefix/key2",
+				Size:         2,
+				LastModified: time.Unix(2, 0).UTC(),
+			},
+		},
+	}
+)
 
 func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	switch *input.Key {
-	case "valid/key":
-		var length int64 = 0
-		var modified time.Time = time.Unix(0, 0).UTC()
+	case "valid/key", "valid/undeleteable/key", "invalid/key/size":
+		mockInfo := expected_keys[*input.Key]
 		return &s3.HeadObjectOutput{
-			ContentLength: &length,
-			LastModified:  &modified,
+			ContentLength: &mockInfo.ContentLength,
+			LastModified:  &mockInfo.LastModified,
+			VersionId:     &mockInfo.VersionId,
 		}, nil
 	case "access/denied":
 		return nil, awserr.New("AccessDenied", "", nil)
@@ -34,47 +84,29 @@ func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutp
 		return &s3.HeadObjectOutput{}, awserr.New("NotFound", "", nil)
 	case "invalid/key":
 		return &s3.HeadObjectOutput{}, awserr.New(s3.ErrCodeNoSuchKey, "", nil)
-	case "invalid/bucket":
-		return &s3.HeadObjectOutput{}, awserr.New(s3.ErrCodeNoSuchBucket, "", nil)
-	case "invalid/key/size":
-		var length int64 = -1
-		var modified time.Time = time.Unix(1, 0).UTC()
-		return &s3.HeadObjectOutput{
-			ContentLength: &length,
-			LastModified:  &modified,
-		}, nil
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockS3Client.HeadObject got an unexpected key %s", *input.Key)
 }
 
 func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
 	switch *input.Prefix {
 	case "valid/prefix":
-		var key1 string = "valid/prefix/key1"
-		var length1 int64 = 1
-		var modified1 time.Time = time.Unix(1, 0).UTC()
+		var contents = make([]*s3.Object, len(expected_prefixes[*input.Prefix]))
 
-		var key2 string = "valid/prefix/key2"
-		var length2 int64 = 2
-		var modified2 time.Time = time.Unix(2, 0).UTC()
+		for index := range expected_prefixes[*input.Prefix] {
+			s3Object := new(s3.Object)
+			s3Object.Key = &expected_prefixes[*input.Prefix][index].Key
+			s3Object.Size = &expected_prefixes[*input.Prefix][index].Size
+			s3Object.LastModified = &expected_prefixes[*input.Prefix][index].LastModified
 
-		var obj1 s3.Object = s3.Object{
-			LastModified: &modified1,
-			Key:          &key1,
-			Size:         &length1,
+			contents[index] = s3Object
 		}
-		var obj2 s3.Object = s3.Object{
-			LastModified: &modified2,
-			Key:          &key2,
-			Size:         &length2,
-		}
-		return &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{&obj1, &obj2},
-		}, nil
+
+		return &s3.ListObjectsV2Output{Contents: contents}, nil
 	case "invalid/prefix":
 		return &s3.ListObjectsV2Output{}, awserr.New("NotFound", "", nil)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockS3Client.ListObjectsV2 got an unexpected prefix %s", *input.Prefix)
 }
 
 func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
@@ -84,17 +116,17 @@ func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput,
 	case "invalid/new/key":
 		return &s3.PutObjectOutput{}, awserr.New("NotFound", "", nil)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockS3Client.PutObject got an unexpected key %s", *input.Key)
 }
 
 func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
 	switch *input.Key {
 	case "valid/key":
 		return &s3.DeleteObjectOutput{}, nil
-	case "invalid/key":
-		return &s3.DeleteObjectOutput{}, awserr.New("NotFound", "", nil)
+	case "valid/undeleteable/key":
+		return &s3.DeleteObjectOutput{}, awserr.New("AccessDenied", "", nil)
 	}
-	return nil, nil
+	return nil, fmt.Errorf("mockS3Client.DeleteObject got an unexpected key %s", *input.Key)
 }
 
 /* test cases for CreateB2Backend */
@@ -154,7 +186,7 @@ func TestB2GetFileInfoValidKey(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo == nil || err != nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: GetFileInfo was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, "valid/key", fileinfo.name, "fileinfo.name")
 		assertEquals(t, uint64(0), fileinfo.size, "fileinfo.size")
@@ -176,7 +208,7 @@ func TestB2GetFileInfoInvalidKey(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: GetFileInfo was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}
@@ -196,7 +228,7 @@ func TestB2GetFileInfoInvalidKeySize(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: /*GetFileInfo was supposed to faile, but instead returned */%+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, "invalid file info", err.Error(), "err.Error")
 	}
@@ -217,7 +249,7 @@ func TestB2ListFilesValidPrefix(t *testing.T) {
 	fileinfo, err := mockB2.ListFiles(mockURI)
 
 	if fileinfo == nil || err != nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: ListFiles was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, 2, len(fileinfo), "len(fileinfo)")
 
@@ -245,7 +277,7 @@ func TestB2ListFilesInvalidPrefix(t *testing.T) {
 	fileinfo, err := mockB2.ListFiles(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: ListFiles was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}
@@ -284,7 +316,7 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 	err = mockB2.StoreFile(nil, mockURI)
 
 	if err == nil {
-		t.Fatalf("unexpected test result: no error returned")
+		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}
@@ -323,8 +355,28 @@ func TestB2RemoveFileInvalidKey(t *testing.T) {
 	err = mockB2.RemoveFile(mockURI)
 
 	if err == nil {
-		t.Fatalf("unexpected test result: no error returned")
+		t.Fatalf("unexpected test result: RemoveFile was supposed to fail")
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
+	}
+}
+
+func TestB2RemoveFileUndeletableKey(t *testing.T) {
+	// Setup Test
+	mockB2 := &B2Backend{
+		&mockS3Client{},
+	}
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/undeleteable/key")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	err = mockB2.RemoveFile(mockURI)
+
+	if err == nil {
+		t.Fatalf("unexpected test result: RemoveFile was supposed to fail")
+	} else {
+		assertEquals(t, ErrAccessDenied, err.Error(), "err.Error")
 	}
 }

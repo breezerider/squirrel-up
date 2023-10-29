@@ -66,7 +66,6 @@ func (b2 *B2Backend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
 	var key string = strings.TrimPrefix(uri.Path, "/")
 
 	// get object properties stored in S3 bucket under key
-	// resp, err := b2.b2S3Client.HeadObject(&s3.HeadObjectInput{
 	resp, err := b2.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -95,7 +94,6 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 	var prefix string = strings.TrimPrefix(uri.Path, "/")
 
 	// list object stored under given prefix
-	// objects, err := b2.b2S3Client.ListObjectsV2(&s3.ListObjectsV2Input{
 	objects, err := b2.ListObjectsV2(&s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(prefix),
@@ -118,12 +116,12 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 // Output URI must follow the pattern: b2://bucket/path/to/key.
 func (b2 *B2Backend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
 	var bucket string = uri.Host
-	var prefix string = strings.TrimPrefix(uri.Path, "/")
+	var key string = strings.TrimPrefix(uri.Path, "/")
 
 	// upload reader contents to S3 bucket as an object with the given key
 	_, err := b2.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(prefix),
+		Key:    aws.String(key),
 		Body:   aws.ReadSeekCloser(input),
 	})
 
@@ -137,12 +135,22 @@ func (b2 *B2Backend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
 // Object URI must follow the pattern: b2://bucket/path/to/key.
 func (b2 *B2Backend) RemoveFile(uri *url.URL) error {
 	var bucket string = uri.Host
-	var prefix string = strings.TrimPrefix(uri.Path, "/")
+	var key string = strings.TrimPrefix(uri.Path, "/")
 
-	// upload reader contents to S3 bucket as an object with the given key
-	_, err := b2.DeleteObject(&s3.DeleteObjectInput{
+	// get object properties stored in S3 bucket under key
+	resp, err := b2.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
-		Key:    aws.String(prefix),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return handleError(err)
+	}
+
+	// remove object with the given key from S3 bucket
+	_, err = b2.DeleteObject(&s3.DeleteObjectInput{
+		Bucket:    aws.String(bucket),
+		Key:       aws.String(key),
+		VersionId: resp.VersionId,
 	})
 
 	if err != nil {
