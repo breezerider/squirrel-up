@@ -18,11 +18,13 @@ func TestFileInfo(t *testing.T) {
 		name:     "path/to/file",
 		size:     uint64(0),
 		modified: time.Unix(0, 0).UTC(),
+		isfile:   true,
 	}
 
 	assertEquals(t, "path/to/file", fileinfo.Name(), "fileinfo.Name")
 	assertEquals(t, uint64(0), fileinfo.Size(), "fileinfo.Size")
 	assertEquals(t, time.Unix(0, 0).UTC(), fileinfo.Modified(), "fileinfo.Modified")
+	assertEquals(t, true, fileinfo.IsFile(), "fileinfo.IsFile")
 
 }
 

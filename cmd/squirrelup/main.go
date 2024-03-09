@@ -123,39 +123,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	/* validate output URI */
-	// fileinfo, err := backend.GetFileInfo(outputPrefixUri)
-	// if err != nil {
-	// 	if err.Error() == common.ErrFileNotFound {
-	// 		fmt.Fprintf(stderr, "file %q not found\n", outputPrefixUri)
-	// 	} else {
-	// 		return fmt.Errorf("backend operation failed: %s", err.Error())
-	// 	}
-	// } else {
-	// 	fmt.Fprintf(stdout, "file info: %+v\n", *fileinfo)
-	// }
-
-	/* list prefix contents */
-	filelist, err := backend.ListFiles(outputPrefixUri)
+	fileinfo, err := backend.GetFileInfo(outputPrefixUri)
 	if err != nil {
-		return fmt.Errorf("could not list remote files: %s", err.Error())
-	}
-
-	/* remove old files */
-	if cfg.Backup.Hours > 0.0 {
-		timeNow := time.Now()
-		for _, fileinfo := range filelist {
-			diff := timeNow.Sub(fileinfo.Modified())
-			fmt.Fprintf(stderr, "file %s, time diff = %.0f h\n", fileinfo.Name(), diff.Hours())
-			if diff.Hours() >= cfg.Backup.Hours {
-				relativeUri, err := outputPrefixUri.Parse("/" + fileinfo.Name())
-				if err == nil {
-					fmt.Fprintf(stdout, "removing file %q\n", relativeUri)
-					err = backend.RemoveFile(relativeUri)
-				}
-				if err != nil {
-					fmt.Fprintf(stderr, "could not remove remote files: %s\n", err.Error())
-				}
-			}
+		if err.Error() == common.ErrFileNotFound {
+			fmt.Fprintf(stderr, "file %q not found\n", outputPrefixUri)
+		} else {
+			return fmt.Errorf("backend operation failed: %s", err.Error())
+		}
+	} else {
+		fmt.Fprintf(stdout, "file info: %+v\n", *fileinfo)
+		if fileinfo.IsFile() {
+			return fmt.Errorf("output URI must be a directory prefix, but a file path was specified: %q", outputPrefixUri)
 		}
 	}
 
@@ -215,6 +193,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	_ = outputFile.Close()
 	_ = os.Remove(outputArchivePath)
 	_ = os.Remove(outputEncryptedPath)
+
+	/* clean up remote backup prefix */
+	if err == nil && cfg.Backup.Hours > 0.0 {
+		err = cleanupBackupPrefix(backend, cfg.Backup.Hours, outputPrefixUri, stdout, stderr)
+		if err != nil {
+			errorMessage = fmt.Sprintf("failed to clean up backup prefix: %s", err.Error())
+		}
+	}
 
 	if err != nil {
 		return fmt.Errorf(errorMessage)
@@ -367,7 +353,6 @@ func archiveDirectory(dirPath string) (string, error) {
 
 	return tmp.Name(), nil
 }
-
 func encryptFile(filePath string, recipients []age.Recipient, stdout, stderr io.Writer) (string, error) {
 	// open input file
 	input, err := os.Open(filepath.Clean(filePath))
@@ -397,4 +382,31 @@ func encryptFile(filePath string, recipients []age.Recipient, stdout, stderr io.
 	_ = encryptedWriter.Close()
 
 	return tmp.Name(), nil
+}
+
+func cleanupBackupPrefix(backend common.StorageBackend, hours float64, outputPrefixUri *url.URL, stdout, stderr io.Writer) error {
+	/* list prefix contents */
+	filelist, err := backend.ListFiles(outputPrefixUri)
+	if err != nil {
+		return fmt.Errorf("could not list remote files: %s", err.Error())
+	}
+
+	/* remove old files */
+	timeNow := time.Now()
+	for _, fileinfo := range filelist {
+		diff := timeNow.Sub(fileinfo.Modified())
+		fmt.Fprintf(stderr, "file %s, time diff = %.0f h\n", fileinfo.Name(), diff.Hours())
+		if diff.Hours() >= hours {
+			relativeUri, err := outputPrefixUri.Parse("/" + fileinfo.Name())
+			if err == nil {
+				fmt.Fprintf(stdout, "removing file %q\n", relativeUri)
+				err = backend.RemoveFile(relativeUri)
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "could not remove remote file %q: %s\n", relativeUri, err.Error())
+			}
+		}
+	}
+
+	return nil
 }

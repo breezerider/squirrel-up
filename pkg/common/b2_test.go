@@ -50,7 +50,7 @@ var (
 	}
 
 	expected_prefixes = map[string][]mockB2KeyInfo{
-		"valid/prefix": []mockB2KeyInfo{
+		"valid/prefix/": []mockB2KeyInfo{
 			mockB2KeyInfo{
 				Key:          "valid/prefix/key1",
 				Size:         1,
@@ -90,7 +90,7 @@ func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutp
 
 func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
 	switch *input.Prefix {
-	case "valid/prefix":
+	case "valid/prefix/":
 		var contents = make([]*s3.Object, len(expected_prefixes[*input.Prefix]))
 
 		for index := range expected_prefixes[*input.Prefix] {
@@ -103,7 +103,7 @@ func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObje
 		}
 
 		return &s3.ListObjectsV2Output{Contents: contents}, nil
-	case "invalid/prefix":
+	case "invalid/prefix/":
 		return &s3.ListObjectsV2Output{}, awserr.New("NotFound", "", nil)
 	}
 	return nil, fmt.Errorf("mockS3Client.ListObjectsV2 got an unexpected prefix %s", *input.Prefix)
@@ -186,11 +186,35 @@ func TestB2GetFileInfoValidKey(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo == nil || err != nil {
-		t.Fatalf("unexpected test result: GetFileInfo was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, "valid/key", fileinfo.name, "fileinfo.name")
 		assertEquals(t, uint64(0), fileinfo.size, "fileinfo.size")
 		assertEquals(t, time.Unix(0, 0).UTC(), fileinfo.modified, "fileinfo.modified")
+		assertEquals(t, true, fileinfo.isfile, "fileinfo.isfile")
+	}
+}
+
+func TestB2GetFileInfoValidPrefix(t *testing.T) {
+	// Setup Test
+	mockB2 := &B2Backend{
+		&mockS3Client{},
+	}
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/prefix/")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	fileinfo, err := mockB2.GetFileInfo(mockURI)
+
+	if fileinfo == nil || err != nil {
+		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+	} else {
+		assertEquals(t, "valid/prefix/", fileinfo.name, "fileinfo.name")
+		assertEquals(t, uint64(3), fileinfo.size, "fileinfo.size")
+		assertEquals(t, time.Unix(2, 0).UTC(), fileinfo.modified, "fileinfo.modified")
+		assertEquals(t, false, fileinfo.isfile, "fileinfo.isfile")
 	}
 }
 
@@ -208,7 +232,27 @@ func TestB2GetFileInfoInvalidKey(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: GetFileInfo was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: GetFileInfo was supposed to fail, but instead returned %+v, %+v", fileinfo, err)
+	} else {
+		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
+	}
+}
+
+func TestB2GetFileInfoInvalidPrefix(t *testing.T) {
+	// Setup Test
+	mockB2 := &B2Backend{
+		&mockS3Client{},
+	}
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/prefix/")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	fileinfo, err := mockB2.GetFileInfo(mockURI)
+
+	if fileinfo != nil || err == nil {
+		t.Fatalf("unexpected test result: GetFileInfo was supposed to fail, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}
@@ -228,7 +272,7 @@ func TestB2GetFileInfoInvalidKeySize(t *testing.T) {
 	fileinfo, err := mockB2.GetFileInfo(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: /*GetFileInfo was supposed to faile, but instead returned */%+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: GetFileInfo was supposed to fail, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, "invalid file info", err.Error(), "err.Error")
 	}
@@ -240,7 +284,7 @@ func TestB2ListFilesValidPrefix(t *testing.T) {
 	mockB2 := &B2Backend{
 		&mockS3Client{},
 	}
-	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/prefix")
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -249,17 +293,19 @@ func TestB2ListFilesValidPrefix(t *testing.T) {
 	fileinfo, err := mockB2.ListFiles(mockURI)
 
 	if fileinfo == nil || err != nil {
-		t.Fatalf("unexpected test result: ListFiles was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, 2, len(fileinfo), "len(fileinfo)")
 
 		assertEquals(t, "valid/prefix/key1", fileinfo[0].name, "fileinfo[0].name")
 		assertEquals(t, uint64(1), fileinfo[0].size, "fileinfo[0].size")
 		assertEquals(t, time.Unix(1, 0).UTC(), fileinfo[0].modified, "fileinfo[0].modified")
+		assertEquals(t, true, fileinfo[0].isfile, "fileinfo[0].isfile")
 
 		assertEquals(t, "valid/prefix/key2", fileinfo[1].name, "fileinfo[1].name")
 		assertEquals(t, uint64(2), fileinfo[1].size, "fileinfo[1].size")
 		assertEquals(t, time.Unix(2, 0).UTC(), fileinfo[1].modified, "fileinfo[1].modified")
+		assertEquals(t, true, fileinfo[1].isfile, "fileinfo[1].isfile")
 	}
 }
 
@@ -268,7 +314,7 @@ func TestB2ListFilesInvalidPrefix(t *testing.T) {
 	mockB2 := &B2Backend{
 		&mockS3Client{},
 	}
-	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/prefix")
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -277,7 +323,7 @@ func TestB2ListFilesInvalidPrefix(t *testing.T) {
 	fileinfo, err := mockB2.ListFiles(mockURI)
 
 	if fileinfo != nil || err == nil {
-		t.Fatalf("unexpected test result: ListFiles was supposed to faile, but instead returned %+v, %+v", fileinfo, err)
+		t.Fatalf("unexpected test result: ListFiles was supposed to fail, but instead returned %+v, %+v", fileinfo, err)
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}

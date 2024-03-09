@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,7 @@ type (
 		name     string
 		size     uint64
 		modified time.Time
+		isfile   bool
 	}
 
 	// StorageBackend si a generic interface to storage backends.
@@ -84,6 +86,11 @@ func (fi *FileInfo) Modified() time.Time {
 	return fi.modified
 }
 
+// Modified returns last modified date of the file object.
+func (fi *FileInfo) IsFile() bool {
+	return fi.isfile
+}
+
 // GetFileInfo returns a FileInfo struct filled with information
 // about object defined by the input URI.
 // Input URI must follow the pattern: dummy://path/to/file.
@@ -94,6 +101,7 @@ func (*DummyBackend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
 		name:     path,
 		size:     uint64(0),
 		modified: time.Unix(0, 0).UTC(),
+		isfile:   !strings.HasSuffix(uri.Path, "/"),
 	}, nil
 }
 

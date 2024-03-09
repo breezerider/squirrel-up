@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -64,25 +65,52 @@ func handleError(err error) error {
 func (b2 *B2Backend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
 	var bucket string = uri.Host
 	var key string = strings.TrimPrefix(uri.Path, "/")
+	var keysize uint64 = 0
+	var modifieddate time.Time
+	var isfile bool
 
-	// get object properties stored in S3 bucket under key
-	resp, err := b2.HeadObject(&s3.HeadObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	})
-	if err != nil {
-		return nil, handleError(err)
-	}
+	// is this a prefix path?
+	if strings.HasSuffix(key, "/") {
+		isfile = false
 
-	filesize := *resp.ContentLength
-	if filesize < 0 {
-		return nil, errors.New("invalid file info")
+		filelist, err := b2.ListFiles(uri)
+		if err != nil {
+			return nil, err
+		}
+
+		modifieddate = time.Unix(0, 0).UTC()
+		for _, fileinfo := range filelist {
+			keysize += fileinfo.Size()
+			if modifieddate.Before(fileinfo.Modified()) {
+				modifieddate = fileinfo.Modified()
+			}
+		}
+	} else { // object path
+		isfile = true
+
+		// get object properties stored in S3 bucket under key
+		resp, err := b2.HeadObject(&s3.HeadObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return nil, handleError(err)
+		}
+
+		filesize := *resp.ContentLength
+		if filesize < 0 {
+			return nil, errors.New("invalid file info")
+		}
+		keysize = uint64(filesize)
+
+		modifieddate = *resp.LastModified
 	}
 
 	return &FileInfo{
 		name:     key,
-		size:     uint64(filesize),
-		modified: *resp.LastModified,
+		size:     keysize,
+		modified: modifieddate,
+		isfile:   isfile,
 	}, nil
 }
 
@@ -107,6 +135,7 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 		result[index].name = *item.Key
 		result[index].size = uint64(*item.Size)
 		result[index].modified = *item.LastModified
+		result[index].isfile = true
 	}
 
 	return result, nil
