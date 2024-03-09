@@ -324,7 +324,12 @@ func TestMainRun(t *testing.T) {
 	fmt.Println("Running TestMainRun...")
 	args := []string{appname, ".", "dummy://path/to/dir/"}
 	var stdout, stderr bytes.Buffer
-	_ = common.GenerateDummyFiles("to/dir/", 2)
+
+	common.CreateDummyBackend = func(cfg *common.Config) common.StorageBackend {
+		dummy := common.DummyBackend{}
+		dummy.GenerateDummyFiles("to/dir/", 2)
+		return &dummy
+	}
 
 	// without encryption
 	os.Setenv("SQUIRRELUP_PUBKEY", "")
@@ -471,6 +476,6 @@ file to/dir/B, time diff = %.0f h
 `, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
 	}
 
-	// clean up
-	_ = common.GenerateDummyFiles("", 0)
+	// clean up test
+	common.CreateDummyBackend = nil
 }

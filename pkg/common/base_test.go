@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -38,6 +39,29 @@ func TestCreateStorageBackendDummy(t *testing.T) {
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
 		t.Fatalf(err.Error())
+	}
+
+	backend, err := CreateStorageBackend(mockURI, cfg)
+	if err != nil {
+		t.Fatalf(err.Error())
+	} else if backend == nil {
+		t.Fatalf("failed to create a DummyBackend")
+	}
+}
+
+func TestCreateStorageBackendDummyCustom(t *testing.T) {
+	cfg := new(Config)
+	if cfg == nil {
+		t.Fatalf("could not allocate memory")
+	}
+
+	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	CreateDummyBackend = func(cfg *Config) StorageBackend {
+		return &DummyBackend{}
 	}
 
 	backend, err := CreateStorageBackend(mockURI, cfg)
@@ -92,9 +116,12 @@ func TestCreateStorageBackendUnknown(t *testing.T) {
 }
 
 /* test cases for DummyBackend.GetFileInfo */
-func TestDummyGetFileInfo(t *testing.T) {
+func TestDummyGetFileInfoFile(t *testing.T) {
 	// Setup Test
 	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -103,19 +130,51 @@ func TestDummyGetFileInfo(t *testing.T) {
 	// Perform the test
 	fileinfo, err := dummy.GetFileInfo(mockURI)
 
-	if fileinfo == nil || err != nil {
+	if fileinfo == nil {
 		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
 	} else {
+		assertEquals(t, err, dummy.GetDummyError(), "dummyError")
+
 		assertEquals(t, "path/to/file", fileinfo.name, "fileinfo.name")
 		assertEquals(t, uint64(0), fileinfo.size, "fileinfo.size")
 		assertEquals(t, time.Unix(0, 0).UTC(), fileinfo.modified, "fileinfo.modified")
+		assertEquals(t, true, fileinfo.isfile, "fileinfo.isfile")
+	}
+}
+
+func TestDummyGetFileInfoDir(t *testing.T) {
+	// Setup Test
+	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
+	mockURI, err := url.ParseRequestURI("dummy://path/to/dir/")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	fileinfo, err := dummy.GetFileInfo(mockURI)
+
+	if fileinfo == nil {
+		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
+	} else {
+		assertEquals(t, err, dummy.GetDummyError(), "dummyError")
+
+		assertEquals(t, "path/to/dir/", fileinfo.name, "fileinfo.name")
+		assertEquals(t, uint64(0), fileinfo.size, "fileinfo.size")
+		assertEquals(t, time.Unix(0, 0).UTC(), fileinfo.modified, "fileinfo.modified")
+		assertEquals(t, false, fileinfo.isfile, "fileinfo.isfile")
 	}
 }
 
 /* test cases for DummyBackend.ListFiles */
-func TestDummyListFiles(t *testing.T) {
+func TestDummyListFilesEmpty(t *testing.T) {
 	// Setup Test
 	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
 	mockURI, err := url.ParseRequestURI("dummy://path/to/dir")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -124,73 +183,84 @@ func TestDummyListFiles(t *testing.T) {
 	// Perform the test
 	fileinfo, err := dummy.ListFiles(mockURI)
 
-	if fileinfo == nil || err != nil {
-		t.Fatalf("unexpected test result: %+v, %+v", fileinfo, err)
-	} else {
-		assertEquals(t, 0, len(fileinfo), "len(fileinfo)")
-	}
+	assertEquals(t, 0, len(fileinfo), "len(fileinfo)")
+	assertEquals(t, err, dummy.GetDummyError(), "dummyError")
 }
 
 func TestDummyListFilesMock(t *testing.T) {
 	// Setup Test
 	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
 	mockURI, err := url.ParseRequestURI("dummy://path/to/dir")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 
 	// setup test
-	dummyFiles := GenerateDummyFiles("to/dir/", 2)
+	dummy.GenerateDummyFiles("to/dir/", 2)
 
 	// Perform the test
 	filelist, err := dummy.ListFiles(mockURI)
 
-	if filelist == nil || err != nil {
+	if filelist == nil {
 		t.Fatalf("unexpected test result: %+v, %+v", filelist, err)
 	} else {
 		assertEquals(t, 2, len(filelist), "len(filelist)")
+		assertEquals(t, err, dummy.GetDummyError(), "dummyError")
 
+		dummyFiles := dummy.GetDummyFiles()
 		for index, fileinfo := range filelist {
 			assertEquals(t, dummyFiles[index].Name(), fileinfo.Name(), "fileinfo.name")
 			assertEquals(t, dummyFiles[index].Size(), fileinfo.Size(), "fileinfo.size")
 			assertEquals(t, dummyFiles[index].Modified(), fileinfo.Modified(), "fileinfo.modified")
+			assertEquals(t, dummyFiles[index].IsFile(), fileinfo.IsFile(), "fileinfo.isfile")
 		}
 	}
-
-	// cleanup
-	GenerateDummyFiles("", 0)
 }
 
 /* test cases for DummyBackend.StoreFile */
 func TestDummyStoreFile(t *testing.T) {
 	// Setup Test
-	mockB2 := &DummyBackend{}
+	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 
 	// Perform the test
-	err = mockB2.StoreFile(nil, mockURI)
-
-	if err != nil {
-		t.Fatalf("unexpected test result: %+v", err)
-	}
+	err = dummy.StoreFile(nil, mockURI)
+	assertEquals(t, err, dummy.GetDummyError(), "dummyError")
 }
 
 /* test cases for DummyBackend.RemoveFile */
 func TestDummyRemoveFile(t *testing.T) {
 	// Setup Test
-	mockB2 := &DummyBackend{}
+	dummy := &DummyBackend{}
+	dummyErr := fmt.Errorf("dummy error")
+	dummy.SetDummyError(dummyErr)
+
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 
 	// Perform the test
-	err = mockB2.RemoveFile(mockURI)
+	err = dummy.RemoveFile(mockURI)
+	assertEquals(t, err, dummy.GetDummyError(), "dummyError")
+}
 
-	if err != nil {
-		t.Fatalf("unexpected test result: %+v", err)
-	}
+/* test cases for DummyBackend.dummyError */
+func TestDummyError(t *testing.T) {
+	// Setup Test
+	dummy := &DummyBackend{}
+
+	// Perform the test
+	err := fmt.Errorf("dummy error")
+	dummy.SetDummyError(err)
+	assertEquals(t, err, dummy.GetDummyError(), "dummyError")
 }

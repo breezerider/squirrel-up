@@ -17,8 +17,8 @@ type (
 		isfile   bool
 	}
 
-	// StorageBackend si a generic interface to storage backends.
-	// Currently, it provides three functions:
+	// StorageBackend is a generic interface to storage backends.
+	// Currently, it provisions following methods:
 	//   * GetFileInfo to get file information in FileInfo struct.
 	//   * ListFiles to list files under a given URI.
 	//   * StoreFile to store data to a given URI.
@@ -32,6 +32,8 @@ type (
 
 	// DummyBackend defines a dummy backend.
 	DummyBackend struct {
+		dummyFiles []FileInfo
+		dummyError error
 	}
 )
 
@@ -42,28 +44,18 @@ const (
 	ErrInvalidConfig = "invalid backend configuration"
 )
 
-var (
-	dummyFiles []FileInfo = []FileInfo{}
-)
-
-// GenerateDummyFiles generate dummy file info list.
-func GenerateDummyFiles(path string, number uint64) []FileInfo {
-	dummyFiles = make([]FileInfo, number)
-	// fmt.Printf("GenerateDummyFiles: %s, %d\n", path, number)
-	for index := range dummyFiles {
-		dummyFiles[index].name = path + string(rune(int('A')+index))
-		dummyFiles[index].size = uint64(index)
-		dummyFiles[index].modified = time.Unix(int64(index), 0).UTC()
-		// fmt.Printf("item %d: %v\n", index, dummyFiles[index])
-	}
-	return dummyFiles
-}
+// CreateDummyBackend function that returns a pre-initialized DummyBackend.
+var CreateDummyBackend func(cfg *Config) StorageBackend = nil
 
 // CreateStorageBackend is a StorageBackend factory function.
 func CreateStorageBackend(uri *url.URL, cfg *Config) (StorageBackend, error) {
 	switch uri.Scheme {
 	case "dummy":
-		return &DummyBackend{}, nil
+		if CreateDummyBackend != nil {
+			return CreateDummyBackend(cfg), nil
+		} else {
+			return &DummyBackend{}, nil
+		}
 	case "b2":
 		return CreateB2Backend(cfg), nil
 	default:
@@ -91,10 +83,38 @@ func (fi *FileInfo) IsFile() bool {
 	return fi.isfile
 }
 
+// GenerateDummyFiles generate dummy file info list.
+func (d *DummyBackend) GenerateDummyFiles(path string, number uint64) {
+	d.dummyFiles = make([]FileInfo, number)
+	// fmt.Printf("GenerateDummyFiles: %s, %d\n", path, number)
+	for index := range d.dummyFiles {
+		d.dummyFiles[index].name = path + string(rune(int('A')+index))
+		d.dummyFiles[index].size = uint64(index)
+		d.dummyFiles[index].modified = time.Unix(int64(index), 0).UTC()
+		d.dummyFiles[index].isfile = true
+		// fmt.Printf("item %d: %v\n", index, dummyFiles[index])
+	}
+}
+
+// GetDummyFiles get dummy file info list.
+func (d *DummyBackend) GetDummyFiles() []FileInfo {
+	return d.dummyFiles
+}
+
+// SetDummyError set dummy error.
+func (d *DummyBackend) SetDummyError(err error) {
+	d.dummyError = err
+}
+
+// GetDummyError get dummy error.
+func (d *DummyBackend) GetDummyError() error {
+	return d.dummyError
+}
+
 // GetFileInfo returns a FileInfo struct filled with information
 // about object defined by the input URI.
 // Input URI must follow the pattern: dummy://path/to/file.
-func (*DummyBackend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
+func (d *DummyBackend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
 	var path string = uri.Host + uri.Path
 
 	return &FileInfo{
@@ -102,24 +122,24 @@ func (*DummyBackend) GetFileInfo(uri *url.URL) (*FileInfo, error) {
 		size:     uint64(0),
 		modified: time.Unix(0, 0).UTC(),
 		isfile:   !strings.HasSuffix(uri.Path, "/"),
-	}, nil
+	}, d.dummyError
 }
 
 // ListFiles return an array of FileInfo structs filled with information
 // about objects defined by the input URI.
 // Input URI must follow the pattern: dummy://path/to/dir.
-func (*DummyBackend) ListFiles(uri *url.URL) ([]FileInfo, error) {
-	return dummyFiles, nil
+func (d *DummyBackend) ListFiles(uri *url.URL) ([]FileInfo, error) {
+	return d.dummyFiles, d.dummyError
 }
 
 // StoreFile writes a data from `input` to output URI.
 // Output URI must follow the pattern: dummy://path/to/file.
-func (*DummyBackend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
-	return nil
+func (d *DummyBackend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
+	return d.dummyError
 }
 
 // RemoveFile remove objects defined by the input URI.
 // Input URI must follow the pattern: dummy://path/to/dir.
-func (*DummyBackend) RemoveFile(uri *url.URL) error {
-	return nil
+func (d *DummyBackend) RemoveFile(uri *url.URL) error {
+	return d.dummyError
 }
