@@ -1,3 +1,5 @@
+-include local.mk
+
 override APP_NAME=squirrelup
 override GO_VERSION=1.21
 override GOLANGCI_LINT_VERSION=v1.54.2
@@ -7,6 +9,7 @@ override HADOLINT_VERSION=v2.10.0
 GOOS?=$(shell go env GOOS || echo linux)
 GOARCH?=$(shell go env GOARCH || echo amd64)
 CGO_ENABLED?=0
+ADDITIONAL_MOUNTS?=
 
 ifeq (, $(shell which docker))
 $(error "Binary docker not found in $(PATH)")
@@ -35,6 +38,7 @@ tidy:
 vendor:
 	@docker run --rm \
 		-v ${PWD}:/project \
+		${ADDITIONAL_MOUNTS} \
 		-w /project \
 		golang:${GO_VERSION} \
 			go mod vendor
@@ -78,6 +82,7 @@ test:
 		-v ${PWD}:/project \
 		-v ${PWD}/.go-build:/.cache/go-build \
 		-v ${PWD}/.go-mod:/go/pkg/mod \
+		${ADDITIONAL_MOUNTS} \
 		-w /project \
 		golang:${GO_VERSION} \
 			go test \
@@ -102,6 +107,7 @@ build:
 		-v ${PWD}:/project \
 		-v ${PWD}/.go-build:/.cache/go-build \
 		-v ${PWD}/.go-mod:/go/pkg/mod \
+		${ADDITIONAL_MOUNTS} \
 		-w /project \
 		-e GOOS=${GOOS} \
 		-e GOARCH=${GOARCH} \
@@ -112,6 +118,13 @@ build:
 				-mod vendor \
 				-o /project/bin/${APP_NAME} \
 				-v /project/cmd/${APP_NAME}
+# If the first argument is "get"...
+ifeq (get,$(firstword $(MAKECMDGOALS)))
+  # use the rest as arguments for "get"
+  GOPKG := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  # ...and turn them into do-nothing targets
+  $(eval $(GOPKG):;@:)
+endif
 
 .PHONY: get
 get:
@@ -119,6 +132,7 @@ get:
 		-v ${PWD}:/project \
 		-v ${PWD}/.go-build:/root/.cache/go-build \
 		-v ${PWD}/.go-mod:/go/pkg/mod \
+		${ADDITIONAL_MOUNTS} \
 		-w /project \
 		-e GOOS=${GOOS} \
 		-e GOARCH=${GOARCH} \
