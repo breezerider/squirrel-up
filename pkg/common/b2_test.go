@@ -1,7 +1,9 @@
 package common
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/url"
 	"testing"
 	"time"
@@ -9,6 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 // Define a mock struct for S3 Client.
@@ -112,7 +116,9 @@ func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObje
 func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	switch *input.Key {
 	case "valid/new/key":
-		return &s3.PutObjectOutput{}, nil
+		_, _ = input.Body.Seek(0, 0)
+		_, err := io.ReadAll(input.Body)
+		return &s3.PutObjectOutput{}, err
 	case "invalid/new/key":
 		return &s3.PutObjectOutput{}, awserr.New("NotFound", "", nil)
 	}
@@ -127,6 +133,14 @@ func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObje
 		return &s3.DeleteObjectOutput{}, awserr.New("AccessDenied", "", nil)
 	}
 	return nil, fmt.Errorf("mockS3Client.DeleteObject got an unexpected key %s", *input.Key)
+}
+
+func setupB2Backend() *B2Backend {
+	return &B2Backend{
+		&mockS3Client{},
+		false,
+		[]progressbar.Option{},
+	}
 }
 
 /* test cases for CreateB2Backend */
@@ -176,6 +190,8 @@ func TestB2GetFileInfoValidKey(t *testing.T) {
 	// Setup Test
 	mockB2 := &B2Backend{
 		&mockS3Client{},
+		false,
+		[]progressbar.Option{},
 	}
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/key")
 	if err != nil {
@@ -197,9 +213,7 @@ func TestB2GetFileInfoValidKey(t *testing.T) {
 
 func TestB2GetFileInfoValidPrefix(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -220,9 +234,7 @@ func TestB2GetFileInfoValidPrefix(t *testing.T) {
 
 func TestB2GetFileInfoInvalidKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/key")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -240,9 +252,7 @@ func TestB2GetFileInfoInvalidKey(t *testing.T) {
 
 func TestB2GetFileInfoInvalidPrefix(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -260,9 +270,7 @@ func TestB2GetFileInfoInvalidPrefix(t *testing.T) {
 
 func TestB2GetFileInfoInvalidKeySize(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/key/size")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -281,9 +289,7 @@ func TestB2GetFileInfoInvalidKeySize(t *testing.T) {
 /* test cases for B2Backend.ListFiles */
 func TestB2ListFilesValidPrefix(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -311,9 +317,7 @@ func TestB2ListFilesValidPrefix(t *testing.T) {
 
 func TestB2ListFilesInvalidPrefix(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/prefix/")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -332,16 +336,15 @@ func TestB2ListFilesInvalidPrefix(t *testing.T) {
 /* test cases for B2Backend.StoreFile */
 func TestB2StoreFileValidKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/new/key")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 
 	// Perform the test
-	err = mockB2.StoreFile(nil, mockURI)
+	data := []byte("test")
+	err = mockB2.StoreFile(bytes.NewReader(data), mockURI)
 
 	if err != nil {
 		t.Fatalf("unexpected test result: %+v", err)
@@ -350,16 +353,15 @@ func TestB2StoreFileValidKey(t *testing.T) {
 
 func TestB2StoreFileInvalidKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/new/key")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
 
 	// Perform the test
-	err = mockB2.StoreFile(nil, mockURI)
+	data := []byte("test")
+	err = mockB2.StoreFile(bytes.NewReader(data), mockURI)
 
 	if err == nil {
 		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
@@ -371,9 +373,7 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 /* test cases for B2Backend.RemoveFile */
 func TestB2RemoveFileValidKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/key")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -389,9 +389,7 @@ func TestB2RemoveFileValidKey(t *testing.T) {
 
 func TestB2RemoveFileInvalidKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/key")
 	if err != nil {
 		t.Fatalf(err.Error())
@@ -409,9 +407,7 @@ func TestB2RemoveFileInvalidKey(t *testing.T) {
 
 func TestB2RemoveFileUndeletableKey(t *testing.T) {
 	// Setup Test
-	mockB2 := &B2Backend{
-		&mockS3Client{},
-	}
+	mockB2 := setupB2Backend()
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/undeleteable/key")
 	if err != nil {
 		t.Fatalf(err.Error())

@@ -6,7 +6,6 @@ require (
 	filippo.io/age v1.1.1
 	github.com/aws/aws-sdk-go v1.45.2
 	github.com/mholt/archiver/v4 v4.0.0-alpha.8.0.20230915193410-aa12f39dc27c
-	github.com/schollz/progressbar v1.0.0
 	github.com/sethvargo/go-envconfig v0.9.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -27,6 +26,7 @@ require (
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.2 // indirect
 	github.com/pierrec/lz4/v4 v4.1.18 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/schollz/progressbar/v3 v3.14.2 // indirect
 	github.com/therootcompany/xz v1.0.1 // indirect
 	github.com/ulikunitz/xz v0.5.11 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect

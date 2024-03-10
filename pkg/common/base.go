@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/schollz/progressbar"
+	"github.com/schollz/progressbar/v3"
 )
 
 type (
@@ -28,7 +28,7 @@ type (
 	StorageBackend interface {
 		GetFileInfo(uri *url.URL) (*FileInfo, error)
 		ListFiles(*url.URL) ([]FileInfo, error)
-		StoreFile(io.ReadSeekCloser, *url.URL) error
+		StoreFile(io.ReadSeeker, *url.URL) error
 		RemoveFile(*url.URL) error
 	}
 
@@ -145,7 +145,7 @@ func (d *DummyBackend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 
 // StoreFile writes a data from `input` to output URI.
 // Output URI must follow the pattern: dummy://path/to/file.
-func (d *DummyBackend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
+func (d *DummyBackend) StoreFile(input io.ReadSeeker, uri *url.URL) error {
 	return d.dummyError
 }
 

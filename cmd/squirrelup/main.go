@@ -15,7 +15,7 @@ import (
 	"filippo.io/age"
 	"github.com/breezerider/squirrel-up/pkg/common"
 	"github.com/mholt/archiver/v4"
-	"github.com/schollz/progressbar"
+	"github.com/schollz/progressbar/v3"
 )
 
 type cliArgs struct {

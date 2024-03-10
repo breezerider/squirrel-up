@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,14 +15,74 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 // B2Backend is struct that holds active B2 session.
-type B2Backend struct {
-	s3iface.S3API
-}
+type (
+	B2Backend struct {
+		s3iface.S3API
+		progressEnabled bool
+		options         []progressbar.Option
+	}
+
+	progressReadSeeker struct {
+		io.ReadSeeker
+		bar  *progressbar.ProgressBar
+		read int64
+		lock sync.Mutex
+	}
+)
+
+const (
+	put_get_object_max_bytes   = 512 * 1024 * 1024
+	multipart_upload_part_size = 100 * 1024 * 1024
+)
 
 var checkS3Client func(*s3.S3)
+
+// NewReader return a new Reader with a given progress bar.
+func newProgressReadSeeker(rs io.ReadSeeker, bar *progressbar.ProgressBar) *progressReadSeeker {
+	return &progressReadSeeker{
+		ReadSeeker: rs,
+		bar:        bar,
+		read:       0,
+	}
+}
+
+// Read will read the data and add the number of bytes to the progressbar for sgnign and uploading.
+func (prs *progressReadSeeker) Read(p []byte) (n int, err error) {
+	n, err = prs.ReadSeeker.Read(p)
+
+	prs.lock.Lock()
+	defer prs.lock.Unlock()
+
+	if prs.bar != nil {
+		if prs.read < prs.bar.GetMax64() {
+			if prs.read == 0 {
+				prs.bar.Describe("signing")
+			}
+			_ = prs.bar.Add(n)
+
+			if prs.bar.IsFinished() {
+				prs.bar.Reset()
+				prs.bar.Describe("uploading")
+			}
+		} else {
+			_ = prs.bar.Add(n)
+		}
+	}
+
+	prs.read += int64(n)
+
+	return
+}
+
+// Seek the input stream by forwarding the call.
+func (prs *progressReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	return prs.ReadSeeker.Seek(offset, whence)
+}
 
 // CreateB2Backend is the B2Backend factory function.
 func CreateB2Backend(cfg *Config) *B2Backend {
@@ -36,6 +97,8 @@ func CreateB2Backend(cfg *Config) *B2Backend {
 	}
 	return &B2Backend{
 		s3Client,
+		false,
+		[]progressbar.Option{},
 	}
 }
 
@@ -143,16 +206,40 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 
 // StoreFile writes data from `input` to output URI.
 // Output URI must follow the pattern: b2://bucket/path/to/key.
-func (b2 *B2Backend) StoreFile(input io.ReadSeekCloser, uri *url.URL) error {
+func (b2 *B2Backend) StoreFile(input io.ReadSeeker, uri *url.URL) error {
+	var err error
 	var bucket string = uri.Host
 	var key string = strings.TrimPrefix(uri.Path, "/")
+	var contentLength int64
+	var bar *progressbar.ProgressBar = nil
 
-	// upload reader contents to S3 bucket as an object with the given key
-	_, err := b2.PutObject(&s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-		Body:   aws.ReadSeekCloser(input),
-	})
+	// get content length
+	contentLength, err = input.Seek(0, io.SeekEnd)
+	_, _ = input.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+
+	// create a progressbar
+	if b2.progressEnabled {
+		bar = progressbar.NewOptions64(contentLength,
+			b2.options...,
+		)
+	}
+	prs := newProgressReadSeeker(input, bar)
+
+	if contentLength > put_get_object_max_bytes {
+		// not implemented
+		_ = bar.Finish()
+		return errors.New(fmt.Sprintf("large file (file size %d > %d bytes), multipart file upload is not implemented", contentLength, put_get_object_max_bytes))
+	} else {
+		// upload reader contents to S3 bucket as an object with the given key
+		_, err = b2.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   prs,
+		})
+	}
 
 	if err != nil {
 		return handleError(err)
@@ -186,4 +273,24 @@ func (b2 *B2Backend) RemoveFile(uri *url.URL) error {
 		return handleError(err)
 	}
 	return nil
+}
+
+// GetProgressEnabled return true if progress output is enabled.
+func (b2 *B2Backend) GetProgressEnabled() bool {
+	return b2.progressEnabled
+}
+
+// SetProgressEnabled enable/disable progress output.
+func (b2 *B2Backend) SetProgressEnabled(e bool) {
+	b2.progressEnabled = e
+}
+
+// GetProgressbarOptions returns progressbar options as a list.
+func (b2 *B2Backend) GetProgressbarOptions() []progressbar.Option {
+	return b2.options
+}
+
+// SetProgressbarOptions sets progressbar options (see progressbar docs).
+func (b2 *B2Backend) SetProgressbarOptions(options ...progressbar.Option) {
+	b2.options = options
 }
