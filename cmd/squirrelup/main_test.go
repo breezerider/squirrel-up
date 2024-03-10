@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ Default configuration is stored under .
 
 func assertEquals(t *testing.T, expected any, actual any, description string) {
 	if actual != expected {
+		t.Log(string(debug.Stack()))
 		t.Fatalf("assertion %s failed:\nexpected: %+v\nactual: %+v\n", description, expected, actual)
 	}
 }
@@ -340,12 +342,11 @@ func TestMainRun(t *testing.T) {
 		diff := time.Now().Sub(time.Unix(0, 0))
 
 		assertEquals(t, fmt.Sprintf(`file info: {name:path/to/dir/ size:0 modified:{wall:0 ext:62135596800 loc:<nil>} isfile:false}
-wrote "." to "dummy://path/to/dir/%s.tar.gz"
+uploaded backup archive of "." to "dummy://path/to/dir/%s.tar.gz"
 removing file "dummy://path/to/dir/A"
 removing file "dummy://path/to/dir/B"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
-no pubkey found, encryption disabled
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 `, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
@@ -364,12 +365,11 @@ file to/dir/B, time diff = %.0f h
 		diff := time.Now().Sub(time.Unix(0, 0))
 
 		assertEquals(t, fmt.Sprintf(`file info: {name:path/to/dir/ size:0 modified:{wall:0 ext:62135596800 loc:<nil>} isfile:false}
-wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
+uploaded backup archive of "." to "dummy://path/to/dir/%s.tar.gz.age"
 removing file "dummy://path/to/dir/A"
 removing file "dummy://path/to/dir/B"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
-recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 `, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
@@ -398,13 +398,12 @@ file to/dir/B, time diff = %.0f h
 		diff := time.Now().Sub(time.Unix(0, 0))
 
 		assertEquals(t, fmt.Sprintf(`file info: {name:path/to/dir/ size:0 modified:{wall:0 ext:62135596800 loc:<nil>} isfile:false}
-wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
+uploaded backup archive of "." to "dummy://path/to/dir/%s.tar.gz.age"
 removing file "dummy://path/to/dir/A"
 removing file "dummy://path/to/dir/B"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`default configuration path is empty
 pubkey parsing failed, assuming it is path to file
-recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 `, diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
@@ -435,12 +434,11 @@ file to/dir/B, time diff = %.0f h
 		diff := time.Now().Sub(time.Unix(0, 0))
 
 		assertEquals(t, fmt.Sprintf(`file info: {name:path/to/dir/ size:0 modified:{wall:0 ext:62135596800 loc:<nil>} isfile:false}
-wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
+uploaded backup archive of "." to "dummy://path/to/dir/%s.tar.gz.age"
 removing file "dummy://path/to/dir/A"
 removing file "dummy://path/to/dir/B"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
-recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 `, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")
@@ -464,13 +462,12 @@ file to/dir/B, time diff = %.0f h
 		diff := time.Now().Sub(time.Unix(0, 0))
 
 		assertEquals(t, fmt.Sprintf(`file info: {name:path/to/dir/ size:0 modified:{wall:0 ext:62135596800 loc:<nil>} isfile:false}
-wrote "." to "dummy://path/to/dir/%s.tar.gz.age"
+uploaded backup archive of "." to "dummy://path/to/dir/%s.tar.gz.age"
 removing file "dummy://path/to/dir/A"
 removing file "dummy://path/to/dir/B"
 `, time.Now().Format("2006-01-02T15-0700")), stdout.String(), "TestMainRun.stdout")
 		assertEquals(t, fmt.Sprintf(`loading configuration from %s
 pubkey parsing failed, assuming it is path to file
-recipients: [age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef]
 file to/dir/A, time diff = %.0f h
 file to/dir/B, time diff = %.0f h
 `, tmpCfg.Name(), diff.Hours(), diff.Hours()), stderr.String(), "TestMainRun.stderr")

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/schollz/progressbar"
 )
 
 type (
@@ -28,6 +30,15 @@ type (
 		ListFiles(*url.URL) ([]FileInfo, error)
 		StoreFile(io.ReadSeekCloser, *url.URL) error
 		RemoveFile(*url.URL) error
+	}
+
+	// ProgressReporterFacade is a generic interface to setting up progress reporting:
+	// enable and disable progress reporting and set progressbar settings.
+	ProgressReporterFacade interface {
+		GetProgressEnabled() bool
+		SetProgressEnabled(bool)
+		GetProgressbarOptions() []progressbar.Option
+		SetProgressbarOptions(options ...progressbar.Option)
 	}
 
 	// DummyBackend defines a dummy backend.

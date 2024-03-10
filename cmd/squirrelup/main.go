@@ -15,6 +15,7 @@ import (
 	"filippo.io/age"
 	"github.com/breezerider/squirrel-up/pkg/common"
 	"github.com/mholt/archiver/v4"
+	"github.com/schollz/progressbar"
 )
 
 type cliArgs struct {
@@ -108,6 +109,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* load configuration */
 	var cfg common.Config
 
+	if cli_args.Verbose {
+		fmt.Fprintf(stderr, "loading configuration...\n")
+	}
 	if len(cli_args.ConfigFilepath) == 0 {
 		cli_args.ConfigFilepath = defaultConfigFilepath
 	}
@@ -117,9 +121,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	/* initialize the backend */
+	if cli_args.Verbose {
+		fmt.Fprintf(stderr, "intializing backend & verifying settings...\n")
+	}
 	backend, err := common.CreateStorageBackend(outputPrefixUri, &cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create backend: %s", err.Error())
+	}
+	if reporter, ok := backend.(common.ProgressReporterFacade); ok {
+		reporter.SetProgressEnabled(cli_args.Verbose)
 	}
 
 	/* validate output URI */
@@ -138,6 +148,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	/* initialize encryption */
+	if cli_args.Verbose {
+		fmt.Fprintf(stderr, "initializing encryption...\n")
+	}
 	var recipients []age.Recipient
 	recipients, err = initEncryption(&cfg, stdout, stderr)
 	if err != nil {
@@ -145,6 +158,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	/* create an archive from the input directory */
+	if cli_args.Verbose {
+		fmt.Fprintf(stderr, "generating backup archive...\n")
+	}
 	var outputArchivePath string
 	outputArchivePath, err = archiveDirectory(inputDirectory)
 	if err != nil {
@@ -155,8 +171,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	/* encrypt the output file */
 	var outputEncryptedPath, outputFileExtension string
 	if len(recipients) > 0 {
-		fmt.Fprintf(stderr, "recipients: %+v\n", recipients)
-		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, stdout, stderr)
+		if cli_args.Verbose {
+			fmt.Fprintf(stderr, "encrypting backup archive for recipients: %+v\n", recipients)
+		}
+		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, cli_args.Verbose, stdout, stderr)
 		if err != nil {
 			_ = os.Remove(outputArchivePath)
 			_ = os.Remove(outputEncryptedPath)
@@ -165,25 +183,44 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		outputFileExtension = ".tar.gz.age"
 	} else {
 		// report no pubkey
-		fmt.Fprintf(stderr, "no pubkey found, encryption disabled\n")
+		if cli_args.Verbose {
+			fmt.Fprintf(stderr, "no pubkey found, encryption disabled\n")
+		}
 		outputEncryptedPath = outputArchivePath
 		outputFileExtension = ".tar.gz"
 	}
 
 	/* store output file */
+	if cli_args.Verbose {
+		fmt.Fprintf(stderr, "uploading backup archive...\n")
+	}
 	var errorMessage string
-	outputFile, err := os.Open(filepath.Clean(outputEncryptedPath))
+	var outputFile *os.File
+	outputFile, err = os.Open(filepath.Clean(outputEncryptedPath))
 	if err == nil {
-		relativeUri, err := outputPrefixUri.Parse(time.Now().Format(cfg.Backup.Name) + outputFileExtension)
+		var relativeUri *url.URL
+		relativeUri, err = outputPrefixUri.Parse(time.Now().Format(cfg.Backup.Name) + outputFileExtension)
 		if err == nil {
-			err = backend.StoreFile(io.ReadSeekCloser(outputFile), relativeUri)
-			if err == nil {
-				// report progress
-				fmt.Fprintf(stdout, "wrote %q to %q\n", inputDirectory, relativeUri)
+			if cli_args.Verbose {
+				fmt.Fprintf(stderr, "uploading backup archive of %q to %q\n", inputDirectory, relativeUri)
 			}
+
+			if reporter, ok := backend.(common.ProgressReporterFacade); ok {
+				reporter.SetProgressbarOptions(
+					progressbar.OptionSetWriter(stdout),
+					progressbar.OptionShowBytes(true),
+					progressbar.OptionClearOnFinish(),
+					progressbar.OptionSetPredictTime(false),
+					progressbar.OptionSetRenderBlankState(true),
+				)
+			}
+
+			err = backend.StoreFile(io.ReadSeekCloser(outputFile), relativeUri)
 		}
 		if err != nil {
-			errorMessage = fmt.Sprintf("unable to write %q to %q: %s", inputDirectory, relativeUri, err.Error())
+			errorMessage = fmt.Sprintf("unable to write backup archive of %q to %q: %s", inputDirectory, relativeUri, err.Error())
+		} else {
+			fmt.Fprintf(stdout, "uploaded backup archive of %q to %q\n", inputDirectory, relativeUri)
 		}
 	} else {
 		errorMessage = fmt.Sprintf("could not open output file: %s", err.Error())
@@ -353,7 +390,14 @@ func archiveDirectory(dirPath string) (string, error) {
 
 	return tmp.Name(), nil
 }
-func encryptFile(filePath string, recipients []age.Recipient, stdout, stderr io.Writer) (string, error) {
+
+func encryptFile(filePath string, recipients []age.Recipient, progress bool, stdout, stderr io.Writer) (string, error) {
+	// get input file size
+	fileInfo, err := os.Stat(filepath.Clean(filePath))
+	if err != nil {
+		return "", fmt.Errorf("could not stat input file %s: %s", filePath, err.Error())
+	}
+
 	// open input file
 	input, err := os.Open(filepath.Clean(filePath))
 	if err != nil {
@@ -373,7 +417,19 @@ func encryptFile(filePath string, recipients []age.Recipient, stdout, stderr io.
 	}
 
 	// encrypt the file
-	numWritten, err := io.Copy(encryptedWriter, input)
+	var progressOutput io.Writer = io.Discard
+	if progress {
+		progressOutput = stdout
+	}
+	bar := progressbar.NewOptions(int(fileInfo.Size()),
+		progressbar.OptionSetWriter(progressOutput),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetDescription("encrypting"),
+		progressbar.OptionClearOnFinish(),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionSetRenderBlankState(true),
+	)
+	numWritten, err := io.Copy(io.MultiWriter(encryptedWriter, bar), input)
 	if err != nil {
 		return "", fmt.Errorf("could not write file '%s' to encrypted file '%s': %s", input.Name(), tmp.Name(), err.Error())
 	} else if numWritten == 0 {
