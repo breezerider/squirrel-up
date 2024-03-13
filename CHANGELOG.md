@@ -1,5 +1,23 @@
 # Change Log
 
+## [0.3.0] - 2024-03-13
+
+### Added
+
+- Implement multipart upload in the B2Backend for large files (with fixed 5 retry attemps & 5 second delay)
+- Introduce ProgressReporterFacade interface for progress reporting settings
+- Add isfile field to FileInfo and support FileInfo on prefixes in B2Backend
+
+### Fixed
+
+- Minor refactor of the test suite.
+- Some more spelling mistakes.
+
+### Changed
+
+- More secure sequence of operations to prevent deleting existing archives in case backup fails
+- Provide verbose output and progress tracking when corresponding flag is specified
+
 ## [0.2.0] - 2023-10-28
 
 ### Added
