@@ -22,9 +22,6 @@ type (
 /* test cases for SetDefaultValues */
 func TestSetDefaultValuesValid(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 
 	if err := cfg.SetDefaultValues(); err != nil {
 		t.Fatalf(err.Error())
@@ -71,9 +68,6 @@ func TestSetDefaultValuesStructInvalid(t *testing.T) {
 /* test cases for LoadConfigFromFile */
 func TestLoadConfigFromFileValid(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	yaml := `s3:
   region: "mock-region"
   id: "mock-id"
@@ -104,9 +98,6 @@ encryption:
 
 func TestLoadConfigFromFileInvalid(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	yaml := `test:
   a: b: c:
 `
@@ -121,9 +112,6 @@ func TestLoadConfigFromFileInvalid(t *testing.T) {
 /* test cases for LoadConfigFromEnv */
 func TestLoadConfigFromEnvValid(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	os.Setenv("SQUIRRELUP_S3_REGION", "mock-region")
 	os.Setenv("SQUIRRELUP_S3_ID", "mock-id")
 	os.Setenv("SQUIRRELUP_S3_SECRET", "mock-secret")
@@ -147,9 +135,6 @@ func TestLoadConfigFromEnvValid(t *testing.T) {
 
 func TestLoadConfigFromEnvInvalid(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	os.Setenv("SQUIRRELUP_BACKUP_HOURS", "invalid")
 
 	if err := cfg.LoadConfigFromEnv(); err == nil {

@@ -32,9 +32,6 @@ func TestFileInfo(t *testing.T) {
 /* test cases for CreateStorageBackend */
 func TestCreateStorageBackendDummy(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
@@ -51,9 +48,6 @@ func TestCreateStorageBackendDummy(t *testing.T) {
 
 func TestCreateStorageBackendDummyCustom(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 
 	mockURI, err := url.ParseRequestURI("dummy://path/to/file")
 	if err != nil {
@@ -74,9 +68,6 @@ func TestCreateStorageBackendDummyCustom(t *testing.T) {
 
 func TestCreateStorageBackendB2(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	cfg.S3.Region = "mock-region"
 	cfg.S3.ID = "mock-id"
 	cfg.S3.Secret = "mock-secret"
@@ -97,9 +88,6 @@ func TestCreateStorageBackendB2(t *testing.T) {
 
 func TestCreateStorageBackendUnknown(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 
 	mockURI, err := url.ParseRequestURI("unknown://test/path/")
 	if err != nil {

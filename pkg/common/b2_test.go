@@ -36,17 +36,17 @@ type (
 
 var (
 	expected_keys = map[string]mockB2ObjectInfo{
-		"valid/key": mockB2ObjectInfo{
+		"valid/key": {
 			ContentLength: 0,
 			LastModified:  time.Unix(0, 0).UTC(),
 			VersionId:     "valid-key-version",
 		},
-		"invalid/key/size": mockB2ObjectInfo{
+		"invalid/key/size": {
 			ContentLength: -1,
 			LastModified:  time.Unix(1, 0).UTC(),
 			VersionId:     "invalid-key-size-version",
 		},
-		"valid/undeleteable/key": mockB2ObjectInfo{
+		"valid/undeleteable/key": {
 			ContentLength: 0,
 			LastModified:  time.Unix(2, 0).UTC(),
 			VersionId:     "valid-undeletable-key-version",
@@ -54,13 +54,13 @@ var (
 	}
 
 	expected_prefixes = map[string][]mockB2KeyInfo{
-		"valid/prefix/": []mockB2KeyInfo{
-			mockB2KeyInfo{
+		"valid/prefix/": {
+			{
 				Key:          "valid/prefix/key1",
 				Size:         1,
 				LastModified: time.Unix(1, 0).UTC(),
 			},
-			mockB2KeyInfo{
+			{
 				Key:          "valid/prefix/key2",
 				Size:         2,
 				LastModified: time.Unix(2, 0).UTC(),
@@ -71,7 +71,7 @@ var (
 
 func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	switch *input.Key {
-	case "valid/key", "valid/undeleteable/key", "invalid/key/size":
+	case "valid/key", "valid/deletable/key", "valid/undeletable/key", "invalid/key/size":
 		mockInfo := expected_keys[*input.Key]
 		return &s3.HeadObjectOutput{
 			ContentLength: &mockInfo.ContentLength,
@@ -127,9 +127,9 @@ func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput,
 
 func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
 	switch *input.Key {
-	case "valid/key":
+	case "valid/deletable/key":
 		return &s3.DeleteObjectOutput{}, nil
-	case "valid/undeleteable/key":
+	case "valid/undeletable/key":
 		return &s3.DeleteObjectOutput{}, awserr.New("AccessDenied", "", nil)
 	}
 	return nil, fmt.Errorf("mockS3Client.DeleteObject got an unexpected key %s", *input.Key)
@@ -146,9 +146,6 @@ func setupB2Backend() *B2Backend {
 /* test cases for CreateB2Backend */
 func TestCreateB2Backend(t *testing.T) {
 	cfg := new(Config)
-	if cfg == nil {
-		t.Fatalf("could not allocate memory")
-	}
 	cfg.S3.Region = "mock-region"
 	cfg.S3.ID = "mock-id"
 	cfg.S3.Secret = "mock-secret"
@@ -374,7 +371,7 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 func TestB2RemoveFileValidKey(t *testing.T) {
 	// Setup Test
 	mockB2 := setupB2Backend()
-	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/key")
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/deletable/key")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
@@ -408,7 +405,7 @@ func TestB2RemoveFileInvalidKey(t *testing.T) {
 func TestB2RemoveFileUndeletableKey(t *testing.T) {
 	// Setup Test
 	mockB2 := setupB2Backend()
-	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/undeleteable/key")
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/undeletable/key")
 	if err != nil {
 		t.Fatalf(err.Error())
 	}
