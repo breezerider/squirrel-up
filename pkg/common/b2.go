@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,61 +28,79 @@ type (
 		options         []progressbar.Option
 	}
 
-	progressReadSeeker struct {
-		io.ReadSeeker
+	progressSectionReader struct {
+		sr   *io.SectionReader
 		bar  *progressbar.ProgressBar
 		read int64
-		lock sync.Mutex
 	}
+
+	partUploadResult struct {
+		completedPart *s3.CompletedPart
+		err           error
+	}
+
+	byPartNum []*s3.CompletedPart
 )
 
 const (
-	put_get_object_max_bytes   = 512 * 1024 * 1024
-	multipart_upload_part_size = 100 * 1024 * 1024
+	put_get_object_max_bytes      = 256 * 1024 * 1024
+	multipart_upload_part_size    = 100 * 1024 * 1024
+	multipart_upload_wait_seconds = 5
+	multipart_upload_max_attempts = 5
 )
 
-var checkS3Client func(*s3.S3)
+var (
+	checkS3Client func(*s3.S3)
+
+	waitfunc func(time.Duration) = func(seconds time.Duration) {
+		time.Sleep(time.Duration(time.Second * seconds))
+	}
+)
 
 // NewReader return a new Reader with a given progress bar.
-func newProgressReadSeeker(rs io.ReadSeeker, bar *progressbar.ProgressBar) *progressReadSeeker {
-	return &progressReadSeeker{
-		ReadSeeker: rs,
-		bar:        bar,
-		read:       0,
+func newProgressSectionReader(sr *io.SectionReader, enableProgress bool, options []progressbar.Option) *progressSectionReader {
+	var bar *progressbar.ProgressBar = nil
+
+	if enableProgress {
+		bar = progressbar.NewOptions64(sr.Size(), options...)
+	}
+
+	return &progressSectionReader{
+		sr:   sr,
+		bar:  bar,
+		read: 0,
 	}
 }
 
 // Read will read the data and add the number of bytes to the progressbar for sgnign and uploading.
-func (prs *progressReadSeeker) Read(p []byte) (n int, err error) {
-	n, err = prs.ReadSeeker.Read(p)
+func (psr *progressSectionReader) Read(p []byte) (n int, err error) {
 
-	prs.lock.Lock()
-	defer prs.lock.Unlock()
+	n, err = psr.sr.Read(p)
 
-	if prs.bar != nil {
-		if prs.read < prs.bar.GetMax64() {
-			if prs.read == 0 {
-				prs.bar.Describe("signing")
+	if psr.bar != nil {
+		if psr.read < psr.sr.Size() {
+			if psr.read == 0 {
+				psr.bar.Describe("signing")
 			}
-			_ = prs.bar.Add(n)
+			_ = psr.bar.Add(n)
 
-			if prs.bar.IsFinished() {
-				prs.bar.Reset()
-				prs.bar.Describe("uploading")
+			if psr.bar.IsFinished() {
+				psr.bar.Reset()
+				psr.bar.Describe("uploading")
 			}
 		} else {
-			_ = prs.bar.Add(n)
+			_ = psr.bar.Add(n)
 		}
 	}
 
-	prs.read += int64(n)
+	psr.read += int64(n)
 
 	return
 }
 
 // Seek the input stream by forwarding the call.
-func (prs *progressReadSeeker) Seek(offset int64, whence int) (int64, error) {
-	return prs.ReadSeeker.Seek(offset, whence)
+func (psr *progressSectionReader) Seek(offset int64, whence int) (int64, error) {
+	return psr.sr.Seek(offset, whence)
 }
 
 // CreateB2Backend is the B2Backend factory function.
@@ -117,9 +136,61 @@ func handleError(err error) error {
 			fallthrough
 		case "EmptyStaticCreds":
 			return errors.New(ErrInvalidConfig)
+		case "RequestTimeout":
+			return errors.New(ErrOperationTimeout)
 		}
 	}
 	return fmt.Errorf("unknown B2 error (%s).", err.Error())
+}
+
+/* byPartNum */
+func (s byPartNum) Len() int {
+	return len(s)
+}
+
+func (s byPartNum) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s byPartNum) Less(i, j int) bool {
+	return *s[i].PartNumber < *s[j].PartNumber
+}
+
+// uploadPart upload a given part of a multipart upload.
+func (b2 *B2Backend) uploadPart(wg *sync.WaitGroup, ch chan partUploadResult, input io.ReadSeeker, partNum, length int64, createOutput *s3.CreateMultipartUploadOutput) {
+	defer wg.Done()
+
+	var uploadOutput *s3.UploadPartOutput
+	var attempt int
+	var err error
+
+uploadCycle:
+	for attempt = 0; attempt < multipart_upload_max_attempts; attempt++ {
+		uploadOutput, err = b2.UploadPart(&s3.UploadPartInput{
+			Body:          input,
+			Bucket:        createOutput.Bucket,
+			Key:           createOutput.Key,
+			PartNumber:    aws.Int64(partNum),
+			UploadId:      createOutput.UploadId,
+			ContentLength: aws.Int64(length),
+		})
+
+		if err == nil {
+			// upload attmept succeeded
+			break uploadCycle
+		} else {
+			// wait before the next attempt
+			waitfunc(multipart_upload_wait_seconds)
+		}
+	}
+
+	ch <- partUploadResult{
+		&s3.CompletedPart{
+			ETag:       uploadOutput.ETag,
+			PartNumber: aws.Int64(partNum),
+		},
+		err,
+	}
 }
 
 // GetFileInfo returns a FileInfo struct filled with information
@@ -206,38 +277,95 @@ func (b2 *B2Backend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 
 // StoreFile writes data from `input` to output URI.
 // Output URI must follow the pattern: b2://bucket/path/to/key.
-func (b2 *B2Backend) StoreFile(input io.ReadSeeker, uri *url.URL) error {
+func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri *url.URL) error {
 	var err error
 	var bucket string = uri.Host
 	var key string = strings.TrimPrefix(uri.Path, "/")
-	var contentLength int64
-	var bar *progressbar.ProgressBar = nil
-
-	// get content length
-	contentLength, err = input.Seek(0, io.SeekEnd)
-	_, _ = input.Seek(0, io.SeekStart)
-	if err != nil {
-		return err
-	}
-
-	// create a progressbar
-	if b2.progressEnabled {
-		bar = progressbar.NewOptions64(contentLength,
-			b2.options...,
-		)
-	}
-	prs := newProgressReadSeeker(input, bar)
 
 	if contentLength > put_get_object_max_bytes {
-		// not implemented
-		_ = bar.Finish()
-		return errors.New(fmt.Sprintf("large file (file size %d > %d bytes), multipart file upload is not implemented", contentLength, put_get_object_max_bytes))
+		// upload in chunks
+		var createOutput *s3.CreateMultipartUploadOutput
+		createOutput, err = b2.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if err != nil {
+			return handleError(err)
+		} else if createOutput == nil || createOutput.UploadId == nil {
+			return handleError(errors.New("multipart upload failed: no upload id found in server response"))
+		}
+
+		// split input into individual parts for upload
+		wg := new(sync.WaitGroup)
+		ch := make(chan partUploadResult)
+
+		var position, length, partNum int64
+		length = put_get_object_max_bytes
+		for position = 0; position < contentLength; position += put_get_object_max_bytes {
+			if (position + length) >= contentLength {
+				length = contentLength - position
+			}
+
+			// bump wait counter and part number
+			wg.Add(1)
+			partNum++
+
+			// create a section reader with progress tracking for current part
+			psr := newProgressSectionReader(io.NewSectionReader(inputStream, position, length), b2.progressEnabled, b2.options)
+
+			// upload part in a coroutine
+			go b2.uploadPart(wg, ch, psr, partNum, length, createOutput)
+		}
+
+		// clean up
+		go func() {
+			wg.Wait()
+			close(ch)
+		}()
+
+		// collect upload statuses
+		var completedParts []*s3.CompletedPart
+		for result := range ch {
+			if result.err != nil {
+				if err == nil {
+					err = result.err
+				}
+			} else {
+				completedParts = append(completedParts, result.completedPart)
+			}
+		}
+
+		if len(completedParts) < int(partNum) || err != nil {
+			// abort multipart upload
+			_, _ = b2.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(bucket),
+				Key:      aws.String(key),
+				UploadId: createOutput.UploadId,
+			})
+		} else {
+			// sort completed parts
+			sort.Sort(byPartNum(completedParts))
+
+			// finalize multipart upload
+			//var completeOutput *s3.CompleteMultipartUploadOutput
+			_, err = b2.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+				Bucket:   aws.String(bucket),
+				Key:      aws.String(key),
+				UploadId: createOutput.UploadId,
+				MultipartUpload: &s3.CompletedMultipartUpload{
+					Parts: completedParts,
+				},
+			})
+		}
 	} else {
+		// create a section reader with progress tracking for whole file
+		psr := newProgressSectionReader(io.NewSectionReader(inputStream, 0, contentLength), b2.progressEnabled, b2.options)
+
 		// upload reader contents to S3 bucket as an object with the given key
 		_, err = b2.PutObject(&s3.PutObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
-			Body:   prs,
+			Body:   psr,
 		})
 	}
 

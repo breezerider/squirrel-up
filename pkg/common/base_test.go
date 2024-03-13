@@ -221,7 +221,7 @@ func TestDummyStoreFile(t *testing.T) {
 	}
 
 	// Perform the test
-	err = dummy.StoreFile(nil, mockURI)
+	err = dummy.StoreFile(nil, 0, mockURI)
 	assertEquals(t, err, dummy.GetDummyError(), "dummyError")
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +35,8 @@ type (
 		LastModified time.Time
 	}
 )
+
+const test_num_multipart_parts = 5
 
 var (
 	expected_keys = map[string]mockB2ObjectInfo{
@@ -67,6 +71,15 @@ var (
 			},
 		},
 	}
+
+	expected_multipart_upload_id = "mock_upload_id"
+
+	actual_mutlipart_uploadpart_calls = map[string][test_num_multipart_parts]int{
+		"valid/new/multipart/key":                 {0, 0, 0, 0, 0},
+		"valid/new/multipart/key/fails/all/parts": {0, 0, 0, 0, 0},
+	}
+
+	uploadpart_mutex sync.Mutex
 )
 
 func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
@@ -116,8 +129,14 @@ func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObje
 func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	switch *input.Key {
 	case "valid/new/key":
-		_, _ = input.Body.Seek(0, 0)
-		_, err := io.ReadAll(input.Body)
+		var err error
+		_, err = io.ReadAll(input.Body)
+		if err == nil {
+			_, err = input.Body.Seek(0, io.SeekStart)
+			if err == nil {
+				_, err = io.ReadAll(input.Body)
+			}
+		}
 		return &s3.PutObjectOutput{}, err
 	case "invalid/new/key":
 		return &s3.PutObjectOutput{}, awserr.New("NotFound", "", nil)
@@ -135,11 +154,115 @@ func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObje
 	return nil, fmt.Errorf("mockS3Client.DeleteObject got an unexpected key %s", *input.Key)
 }
 
+func (m *mockS3Client) CreateMultipartUpload(input *s3.CreateMultipartUploadInput) (*s3.CreateMultipartUploadOutput, error) {
+	switch *input.Key {
+	case "valid/new/multipart/key", "valid/new/multipart/key/fails/all/parts":
+		return &s3.CreateMultipartUploadOutput{Bucket: input.Bucket, Key: input.Key, UploadId: &expected_multipart_upload_id}, nil
+	case "restricted/new/multipart/key":
+		return &s3.CreateMultipartUploadOutput{}, awserr.New("NotFound", "", nil)
+	}
+	return nil, fmt.Errorf("mockS3Client.CreateMultipartUpload got an unexpected key %s", *input.Key)
+}
+
+func (m *mockS3Client) UploadPart(input *s3.UploadPartInput) (*s3.UploadPartOutput, error) {
+	uploadpart_mutex.Lock()
+	defer uploadpart_mutex.Unlock()
+
+	switch *input.Key {
+	case "valid/new/multipart/key", "valid/new/multipart/key/fails/all/parts":
+		var err error
+		// read input twice (emulate signing & upload)
+		_, err = io.ReadAll(input.Body)
+		if err == nil {
+			_, err = input.Body.Seek(0, io.SeekStart)
+			if err == nil {
+				_, err = io.ReadAll(input.Body)
+			}
+		}
+		// bump number of calls
+		num_calls := actual_mutlipart_uploadpart_calls[*input.Key]
+		num_calls[*input.PartNumber-1] += 1
+		actual_mutlipart_uploadpart_calls[*input.Key] = num_calls
+		// errors
+		if err == nil && strings.HasSuffix(*input.Key, "/fails/all/parts") {
+			err = awserr.New("RequestTimeout", "Your socket connection to the server was not read from or written to within the timeout period. Idle connections will be closed.", nil)
+		}
+		// ETag
+		etag := fmt.Sprintf("part%d", *input.PartNumber)
+		return &s3.UploadPartOutput{ETag: &etag}, err
+	case "restricted/new/multipart/key":
+		return &s3.UploadPartOutput{}, awserr.New("NotFound", "", nil)
+	}
+	return nil, fmt.Errorf("mockS3Client.UploadPart got an unexpected key %s", *input.Key)
+}
+
+func (m *mockS3Client) CompleteMultipartUpload(input *s3.CompleteMultipartUploadInput) (*s3.CompleteMultipartUploadOutput, error) {
+	switch *input.Key {
+	case "valid/new/multipart/key":
+		for i, c := range input.MultipartUpload.Parts {
+			if *c.PartNumber != int64(i+1) {
+				return nil, awserr.New("InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.", nil)
+			}
+		}
+		return &s3.CompleteMultipartUploadOutput{}, nil
+	case "restricted/new/multipart/key":
+		return &s3.CompleteMultipartUploadOutput{}, awserr.New("AccessDenied", "", nil)
+	}
+	return nil, fmt.Errorf("mockS3Client.CompleteMultipartUpload got an unexpected key %s", *input.Key)
+}
+
+func (m *mockS3Client) AbortMultipartUpload(input *s3.AbortMultipartUploadInput) (*s3.AbortMultipartUploadOutput, error) {
+	switch *input.Key {
+	case "valid/new/multipart/key/fails/all/parts":
+		return &s3.AbortMultipartUploadOutput{}, nil
+	}
+	return nil, fmt.Errorf("mockS3Client.AbortMultipartUpload got an unexpected key %s", *input.Key)
+}
+
+// helper function
 func setupB2Backend() *B2Backend {
 	return &B2Backend{
 		&mockS3Client{},
 		false,
 		[]progressbar.Option{},
+	}
+}
+
+/* test cases for progressSectionReader */
+func TestProgressSectionReader(t *testing.T) {
+	options := []progressbar.Option{
+		progressbar.OptionSetWriter(io.Discard),
+	}
+
+	data := []byte("test")
+	sr := io.NewSectionReader(bytes.NewReader(data), 1, 2)
+
+	psr := newProgressSectionReader(sr, true, options)
+
+	var m int
+	var n int64
+	var err error
+	var buf []byte = make([]byte, 2)
+
+	m, err = psr.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected test result: %+v, %+v, %+v", m, err, buf)
+	} else {
+		assertEquals(t, 2, m, "num bytes read")
+		assertEquals(t, "es", string(buf), "buf")
+	}
+
+	n, err = psr.Seek(0, 0)
+	if n != 0 || err != nil {
+		t.Fatalf("unexpected test result: %+v, %+v", n, err)
+	}
+
+	m, err = psr.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected test result: %+v, %+v, %+v", m, err, buf)
+	} else {
+		assertEquals(t, 2, m, "num bytes read")
+		assertEquals(t, "es", string(buf), "buf")
 	}
 }
 
@@ -341,10 +464,81 @@ func TestB2StoreFileValidKey(t *testing.T) {
 
 	// Perform the test
 	data := []byte("test")
-	err = mockB2.StoreFile(bytes.NewReader(data), mockURI)
+	err = mockB2.StoreFile(bytes.NewReader(data), 4, mockURI)
 
 	if err != nil {
 		t.Fatalf("unexpected test result: %+v", err)
+	}
+}
+
+func TestB2StoreFileMultipartValidKey(t *testing.T) {
+	// Setup Test
+	mockB2 := setupB2Backend()
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/new/multipart/key")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	data := []byte("test")
+	old_waitfunc := waitfunc
+	waitfunc = func(time.Duration) {}
+	err = mockB2.StoreFile(bytes.NewReader(data), test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+	waitfunc = old_waitfunc
+
+	if err != nil {
+		t.Fatalf("unexpected test result: %+v", err)
+	} else {
+		for i := 0; i < test_num_multipart_parts; i++ {
+			assertEquals(t, 1, actual_mutlipart_uploadpart_calls["valid/new/multipart/key"][i],
+				fmt.Sprintf("actual_mutlipart_uploadpart_calls_%d", i))
+		}
+	}
+}
+
+func TestB2StoreFileMultipartValidKeyFailsAllParts(t *testing.T) {
+	// Setup Test
+	mockB2 := setupB2Backend()
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/new/multipart/key/fails/all/parts")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	data := []byte("test")
+	old_waitfunc := waitfunc
+	waitfunc = func(time.Duration) {}
+	err = mockB2.StoreFile(bytes.NewReader(data), test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+	waitfunc = old_waitfunc
+
+	if err == nil {
+		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
+	} else {
+		assertEquals(t, ErrOperationTimeout, err.Error(), "err.Error")
+
+		for i := 0; i < test_num_multipart_parts; i++ {
+			assertEquals(t, 5, actual_mutlipart_uploadpart_calls["valid/new/multipart/key/fails/all/parts"][i],
+				fmt.Sprintf("actual_mutlipart_uploadpart_calls_%d", i))
+		}
+	}
+}
+
+func TestB2StoreFileMultipartRestrictedKey(t *testing.T) {
+	// Setup Test
+	mockB2 := setupB2Backend()
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/restricted/new/multipart/key")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	data := []byte("test")
+	err = mockB2.StoreFile(bytes.NewReader(data), 2*put_get_object_max_bytes, mockURI)
+
+	if err == nil {
+		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
+	} else {
+		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
 	}
 }
 
@@ -358,7 +552,7 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 
 	// Perform the test
 	data := []byte("test")
-	err = mockB2.StoreFile(bytes.NewReader(data), mockURI)
+	err = mockB2.StoreFile(bytes.NewReader(data), 4, mockURI)
 
 	if err == nil {
 		t.Fatalf("unexpected test result: StoreFile was supposed to fail")

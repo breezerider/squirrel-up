@@ -60,8 +60,7 @@ func usageString(name string) string {
 	return builder.String()
 }
 
-// isDirectory determines if a file represented
-// by `path` is a directory or not.
+// isDirectory returns true if a path points to a directory.
 func isDirectory(path string) (bool, error) {
 	fileInfo, err := os.Stat(path)
 	if err != nil {
@@ -215,7 +214,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 				)
 			}
 
-			err = backend.StoreFile(io.ReadSeekCloser(outputFile), relativeUri)
+			var fileInfo os.FileInfo
+			fileInfo, err = outputFile.Stat()
+			if err == nil {
+				err = backend.StoreFile(io.ReaderAt(outputFile), fileInfo.Size(), relativeUri)
+			}
 		}
 		if err != nil {
 			errorMessage = fmt.Sprintf("unable to write backup archive of %q to %q: %s", inputDirectory, relativeUri, err.Error())

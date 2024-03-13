@@ -28,7 +28,7 @@ type (
 	StorageBackend interface {
 		GetFileInfo(uri *url.URL) (*FileInfo, error)
 		ListFiles(*url.URL) ([]FileInfo, error)
-		StoreFile(io.ReadSeeker, *url.URL) error
+		StoreFile(io.ReaderAt, int64, *url.URL) error
 		RemoveFile(*url.URL) error
 	}
 
@@ -50,9 +50,10 @@ type (
 
 // Common error definitions.
 const (
-	ErrFileNotFound  = "file not found"
-	ErrAccessDenied  = "access denied"
-	ErrInvalidConfig = "invalid backend configuration"
+	ErrFileNotFound     = "file not found"
+	ErrAccessDenied     = "access denied"
+	ErrInvalidConfig    = "invalid backend configuration"
+	ErrOperationTimeout = "operation timeout"
 )
 
 // CreateDummyBackend function that returns a pre-initialized DummyBackend.
@@ -145,7 +146,7 @@ func (d *DummyBackend) ListFiles(uri *url.URL) ([]FileInfo, error) {
 
 // StoreFile writes a data from `input` to output URI.
 // Output URI must follow the pattern: dummy://path/to/file.
-func (d *DummyBackend) StoreFile(input io.ReadSeeker, uri *url.URL) error {
+func (d *DummyBackend) StoreFile(input io.ReaderAt, length int64, uri *url.URL) error {
 	return d.dummyError
 }
 
