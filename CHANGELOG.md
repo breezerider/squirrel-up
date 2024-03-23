@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.3.1] - 2024-03-23
+
+### Fixed
+
+- Bug in multipart upload in the B2Backend that prevented a retry due to EOF.
+- Extend the B2Backend test suite to capture this behavior.
+
 ## [0.3.0] - 2024-03-13
 
 ### Added
