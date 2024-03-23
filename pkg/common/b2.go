@@ -166,6 +166,9 @@ func (b2 *B2Backend) uploadPart(wg *sync.WaitGroup, ch chan partUploadResult, in
 
 uploadCycle:
 	for attempt = 0; attempt < multipart_upload_max_attempts; attempt++ {
+		// seek to the beginning of the stream
+		input.Seek(0, io.SeekStart)
+
 		uploadOutput, err = b2.UploadPart(&s3.UploadPartInput{
 			Body:          input,
 			Bucket:        createOutput.Bucket,
@@ -176,7 +179,7 @@ uploadCycle:
 		})
 
 		if err == nil {
-			// upload attmept succeeded
+			// upload attempt succeeded
 			break uploadCycle
 		} else {
 			// wait before the next attempt

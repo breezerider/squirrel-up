@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -33,6 +34,11 @@ type (
 		Key          string
 		Size         int64
 		LastModified time.Time
+	}
+
+	mockReadSeeker struct {
+		position int
+		length   int
 	}
 )
 
@@ -81,6 +87,47 @@ var (
 
 	uploadpart_mutex sync.Mutex
 )
+
+func (m *mockReadSeeker) Read(p []byte) (n int, err error) {
+	n, err = m.ReadAt(p, int64(m.position))
+	m.position += n
+	return
+}
+
+func (m *mockReadSeeker) ReadAt(p []byte, off int64) (n int, err error) {
+	if off < 0 || off >= int64(m.length) {
+		return 0, errors.New("offset outside content range")
+	}
+
+	var expected int = len(p)
+
+	if (int(off) + expected) > m.length {
+		return 0, errors.New("expected is longer than content length")
+	} else {
+		return expected, nil
+	}
+}
+
+func (m *mockReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	var new_pos int
+
+	switch whence {
+	case io.SeekStart:
+		new_pos = int(offset)
+	case io.SeekEnd:
+		new_pos = m.length + int(offset)
+	case io.SeekCurrent:
+		new_pos = m.position + int(offset)
+	}
+
+	if new_pos >= m.length || new_pos < 0 {
+		return int64(m.position), errors.New("offset outside content range")
+	} else {
+		m.position = int(new_pos)
+	}
+
+	return int64(m.position), nil
+}
 
 func (m *mockS3Client) HeadObject(input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
 	switch *input.Key {
@@ -170,13 +217,23 @@ func (m *mockS3Client) UploadPart(input *s3.UploadPartInput) (*s3.UploadPartOutp
 
 	switch *input.Key {
 	case "valid/new/multipart/key", "valid/new/multipart/key/fails/all/parts":
+		var buf []byte = make([]byte, *input.ContentLength)
 		var err error
+		var n int
+
 		// read input twice (emulate signing & upload)
-		_, err = io.ReadAll(input.Body)
+		n, err = input.Body.Read(buf)
 		if err == nil {
-			_, err = input.Body.Seek(0, io.SeekStart)
-			if err == nil {
-				_, err = io.ReadAll(input.Body)
+			if n != int(*input.ContentLength) {
+				err = io.ErrUnexpectedEOF
+			} else {
+				_, err = input.Body.Seek(0, io.SeekStart)
+				if err == nil {
+					n, err = input.Body.Read(buf)
+					if err == nil && n != int(*input.ContentLength) {
+						err = io.ErrUnexpectedEOF
+					}
+				}
 			}
 		}
 		// bump number of calls
@@ -480,10 +537,13 @@ func TestB2StoreFileMultipartValidKey(t *testing.T) {
 	}
 
 	// Perform the test
-	data := []byte("test")
 	old_waitfunc := waitfunc
 	waitfunc = func(time.Duration) {}
-	err = mockB2.StoreFile(bytes.NewReader(data), test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+	err = mockB2.StoreFile(&mockReadSeeker{
+		position: 0,
+		length:   test_num_multipart_parts * put_get_object_max_bytes,
+	},
+		test_num_multipart_parts*put_get_object_max_bytes, mockURI)
 	waitfunc = old_waitfunc
 
 	if err != nil {
@@ -505,10 +565,13 @@ func TestB2StoreFileMultipartValidKeyFailsAllParts(t *testing.T) {
 	}
 
 	// Perform the test
-	data := []byte("test")
 	old_waitfunc := waitfunc
 	waitfunc = func(time.Duration) {}
-	err = mockB2.StoreFile(bytes.NewReader(data), test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+	err = mockB2.StoreFile(&mockReadSeeker{
+		position: 0,
+		length:   test_num_multipart_parts * put_get_object_max_bytes,
+	},
+		test_num_multipart_parts*put_get_object_max_bytes, mockURI)
 	waitfunc = old_waitfunc
 
 	if err == nil {
