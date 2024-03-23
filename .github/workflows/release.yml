@@ -62,7 +62,7 @@ jobs:
           dpkg-buildpackage -uc -us -b
           mv ../${PACKAGE_NAME}_${VERSION}_amd64.deb .
       - name: Upload debian package as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: deb-package
           path: ${{ env.PACKAGE_NAME }}_${{ env.VERSION }}_amd64.deb
@@ -85,7 +85,7 @@ jobs:
           mv rpmbuild/RPMS/x86_64/${PACKAGE_NAME}-${VERSION}-0.x86_64.rpm .
           gzip -k ${PACKAGE_NAME}-${VERSION}-0.x86_64.rpm
       - name: Upload RPM package as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rpm-package
           path: ${{ env.PACKAGE_NAME }}-${{ env.VERSION }}-0.x86_64.rpm.gz
@@ -113,7 +113,7 @@ jobs:
         uses: sean0x42/markdown-extract@v2
         with:
           file: CHANGELOG.md
-          pattern: "${{ env.VERSION }}"
+          pattern: ${{ env.VERSION }}
       - name: Write output to file
         run: |
           printf '${{ steps.extract-changelog.outputs.markdown }}' > changelog.md
@@ -125,12 +125,12 @@ jobs:
           #git log --pretty=format:"* [%s](${{ github.server_url }}/${{ github.repository }}/commit/%H)" >> changelog.md
           cat changelog.md
       - name: Download debian package from artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: deb-package
           path: .
       - name: Download RPM package from artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: rpm-package
           path: .
@@ -139,10 +139,11 @@ jobs:
           tree
           gunzip ${PACKAGE_NAME}-${VERSION}-0.x86_64.rpm.gz
       - name: Create a release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: false
           prerelease: false
+          name: ${{ github.ref_name }}
           tag_name: ${{ github.ref }}
           body_path: changelog.md
           token: ${{ github.token }}
