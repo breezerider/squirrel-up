@@ -1,5 +1,16 @@
 # Change Log
 
+## [0.3.2] - 2024-04-01
+
+### Fixed
+
+- Overhaul of progress reporting in verbose mode.
+- Minor refactor of base code and typo correction.
+
+### Changed
+
+- Limit number of concurrent multipart upload in B2Backend (currently a hard-coded limit of 4 simultaneous uploads).
+
 ## [0.3.1] - 2024-03-23
 
 ### Fixed
@@ -59,3 +70,7 @@ _First release._
 [0.2.0]: https://github.com/breezerider/squirrelup/releases/tag/v0.2.0
 
 [0.3.0]: https://github.com/breezerider/squirrelup/releases/tag/v0.3.0
+
+[0.3.1]: https://github.com/breezerider/squirrelup/releases/tag/v0.3.1
+
+[0.3.2]: https://github.com/breezerider/squirrelup/releases/tag/v0.3.2
