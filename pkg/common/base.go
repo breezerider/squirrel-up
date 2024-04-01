@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/schollz/progressbar/v3"
 )
 
 type (
@@ -26,19 +24,10 @@ type (
 	//   * StoreFile to store data to a given URI.
 	//   * RemoveFile to remove files under a given URI.
 	StorageBackend interface {
-		GetFileInfo(uri *url.URL) (*FileInfo, error)
+		GetFileInfo(*url.URL) (*FileInfo, error)
 		ListFiles(*url.URL) ([]FileInfo, error)
 		StoreFile(io.ReaderAt, int64, *url.URL) error
 		RemoveFile(*url.URL) error
-	}
-
-	// ProgressReporterFacade is a generic interface to setting up progress reporting:
-	// enable and disable progress reporting and set progressbar settings.
-	ProgressReporterFacade interface {
-		GetProgressEnabled() bool
-		SetProgressEnabled(bool)
-		GetProgressbarOptions() []progressbar.Option
-		SetProgressbarOptions(options ...progressbar.Option)
 	}
 
 	// DummyBackend defines a dummy backend.
@@ -90,7 +79,7 @@ func (fi *FileInfo) Modified() time.Time {
 	return fi.modified
 }
 
-// Modified returns last modified date of the file object.
+// IsFile returns true if this object represents a file.
 func (fi *FileInfo) IsFile() bool {
 	return fi.isfile
 }
