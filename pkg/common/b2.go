@@ -16,22 +16,21 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-
-	"github.com/schollz/progressbar/v3"
 )
 
 // B2Backend is struct that holds active B2 session.
 type (
 	B2Backend struct {
 		s3iface.S3API
-		progressEnabled bool
-		options         []progressbar.Option
+		pr ProgressReporter
 	}
 
 	progressSectionReader struct {
-		sr   *io.SectionReader
-		bar  *progressbar.ProgressBar
-		read int64
+		sr    *io.SectionReader
+		pr    ProgressReporter
+		part  string
+		index int
+		read  int64
 	}
 
 	partUploadResult struct {
@@ -43,10 +42,10 @@ type (
 )
 
 const (
-	put_get_object_max_bytes      = 256 * 1024 * 1024
-	multipart_upload_part_size    = 100 * 1024 * 1024
-	multipart_upload_wait_seconds = 5
-	multipart_upload_max_attempts = 5
+	multipart_upload_part_size     = 100 * 1024 * 1024
+	multipart_upload_wait_seconds  = 5
+	multipart_upload_max_attempts  = 5
+	multipart_upload_max_concurent = 4
 )
 
 var (
@@ -58,42 +57,42 @@ var (
 )
 
 // NewReader return a new Reader with a given progress bar.
-func newProgressSectionReader(sr *io.SectionReader, enableProgress bool, options []progressbar.Option) *progressSectionReader {
-	var bar *progressbar.ProgressBar = nil
+func newProgressSectionReader(sr *io.SectionReader, pr ProgressReporter, partNumber int) *progressSectionReader {
+	var index int = 0
+	var part string = ""
 
-	if enableProgress {
-		bar = progressbar.NewOptions64(sr.Size(), options...)
+	if pr != nil {
+		index, _ = pr.CreateFileTask(sr.Size() * 2)
+		if partNumber > 0 {
+			part = fmt.Sprintf(" part #%d", partNumber)
+		}
 	}
 
 	return &progressSectionReader{
-		sr:   sr,
-		bar:  bar,
-		read: 0,
+		sr:    sr,
+		pr:    pr,
+		part:  part,
+		index: index,
+		read:  0,
 	}
 }
 
 // Read will read the data and add the number of bytes to the progressbar for sgnign and uploading.
 func (psr *progressSectionReader) Read(p []byte) (n int, err error) {
-
 	n, err = psr.sr.Read(p)
 
-	if psr.bar != nil {
-		if psr.read < psr.sr.Size() {
-			if psr.read == 0 {
-				psr.bar.Describe("signing")
-			}
-			_ = psr.bar.Add(n)
+	if psr.pr != nil {
+		if psr.read == 0 {
+			_ = psr.pr.DescribeTask(psr.index, "signing"+psr.part)
+		}
 
-			if psr.bar.IsFinished() {
-				psr.bar.Reset()
-				psr.bar.Describe("uploading")
-			}
-		} else {
-			_ = psr.bar.Add(n)
+		psr.read += int64(n)
+		_ = psr.pr.AdvanceTask(psr.index, int64(n))
+
+		if psr.read == psr.sr.Size() {
+			_ = psr.pr.DescribeTask(psr.index, "uploading"+psr.part)
 		}
 	}
-
-	psr.read += int64(n)
 
 	return
 }
@@ -116,8 +115,7 @@ func CreateB2Backend(cfg *Config) *B2Backend {
 	}
 	return &B2Backend{
 		s3Client,
-		false,
-		[]progressbar.Option{},
+		cfg.Internal.Reporter,
 	}
 }
 
@@ -143,7 +141,7 @@ func handleError(err error) error {
 	return fmt.Errorf("unknown B2 error (%s).", err.Error())
 }
 
-/* byPartNum */
+/* Sort by part number. */
 func (s byPartNum) Len() int {
 	return len(s)
 }
@@ -157,8 +155,9 @@ func (s byPartNum) Less(i, j int) bool {
 }
 
 // uploadPart upload a given part of a multipart upload.
-func (b2 *B2Backend) uploadPart(wg *sync.WaitGroup, ch chan partUploadResult, input io.ReadSeeker, partNum, length int64, createOutput *s3.CreateMultipartUploadOutput) {
+func (b2 *B2Backend) uploadPart(wg *sync.WaitGroup, result chan partUploadResult, semaphone chan bool, partNum int, input io.ReadSeeker, length int64, createOutput *s3.CreateMultipartUploadOutput) {
 	defer wg.Done()
+	<-semaphone
 
 	var uploadOutput *s3.UploadPartOutput
 	var attempt int
@@ -167,13 +166,13 @@ func (b2 *B2Backend) uploadPart(wg *sync.WaitGroup, ch chan partUploadResult, in
 uploadCycle:
 	for attempt = 0; attempt < multipart_upload_max_attempts; attempt++ {
 		// seek to the beginning of the stream
-		input.Seek(0, io.SeekStart)
+		_, _ = input.Seek(0, io.SeekStart)
 
 		uploadOutput, err = b2.UploadPart(&s3.UploadPartInput{
 			Body:          input,
 			Bucket:        createOutput.Bucket,
 			Key:           createOutput.Key,
-			PartNumber:    aws.Int64(partNum),
+			PartNumber:    aws.Int64(int64(partNum)),
 			UploadId:      createOutput.UploadId,
 			ContentLength: aws.Int64(length),
 		})
@@ -187,10 +186,10 @@ uploadCycle:
 		}
 	}
 
-	ch <- partUploadResult{
+	result <- partUploadResult{
 		&s3.CompletedPart{
 			ETag:       uploadOutput.ETag,
-			PartNumber: aws.Int64(partNum),
+			PartNumber: aws.Int64(int64(partNum)),
 		},
 		err,
 	}
@@ -285,7 +284,7 @@ func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri
 	var bucket string = uri.Host
 	var key string = strings.TrimPrefix(uri.Path, "/")
 
-	if contentLength > put_get_object_max_bytes {
+	if contentLength > multipart_upload_part_size {
 		// upload in chunks
 		var createOutput *s3.CreateMultipartUploadOutput
 		createOutput, err = b2.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
@@ -300,11 +299,19 @@ func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri
 
 		// split input into individual parts for upload
 		wg := new(sync.WaitGroup)
-		ch := make(chan partUploadResult)
+		result := make(chan partUploadResult)
+		semaphore := make(chan bool, multipart_upload_max_concurent)
 
-		var position, length, partNum int64
-		length = put_get_object_max_bytes
-		for position = 0; position < contentLength; position += put_get_object_max_bytes {
+		var jobsStarted int
+		for jobsStarted = 0; jobsStarted < multipart_upload_max_concurent; jobsStarted++ {
+			// put a value into the semaphore
+			semaphore <- true
+		}
+
+		var partNum int
+		var position, length int64
+		length = multipart_upload_part_size
+		for position = 0; position < contentLength; position += multipart_upload_part_size {
 			if (position + length) >= contentLength {
 				length = contentLength - position
 			}
@@ -314,21 +321,22 @@ func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri
 			partNum++
 
 			// create a section reader with progress tracking for current part
-			psr := newProgressSectionReader(io.NewSectionReader(inputStream, position, length), b2.progressEnabled, b2.options)
+			psr := newProgressSectionReader(io.NewSectionReader(inputStream, position, length), b2.pr, int(partNum))
 
 			// upload part in a coroutine
-			go b2.uploadPart(wg, ch, psr, partNum, length, createOutput)
+			go b2.uploadPart(wg, result, semaphore, partNum, psr, length, createOutput)
 		}
 
 		// clean up
 		go func() {
 			wg.Wait()
-			close(ch)
+			close(result)
+			close(semaphore)
 		}()
 
 		// collect upload statuses
 		var completedParts []*s3.CompletedPart
-		for result := range ch {
+		for result := range result {
 			if result.err != nil {
 				if err == nil {
 					err = result.err
@@ -336,9 +344,14 @@ func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri
 			} else {
 				completedParts = append(completedParts, result.completedPart)
 			}
+			if jobsStarted < partNum {
+				// put a value into the semaphore
+				semaphore <- true
+			}
+			jobsStarted++
 		}
 
-		if len(completedParts) < int(partNum) || err != nil {
+		if len(completedParts) < partNum || err != nil {
 			// abort multipart upload
 			_, _ = b2.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
 				Bucket:   aws.String(bucket),
@@ -362,7 +375,7 @@ func (b2 *B2Backend) StoreFile(inputStream io.ReaderAt, contentLength int64, uri
 		}
 	} else {
 		// create a section reader with progress tracking for whole file
-		psr := newProgressSectionReader(io.NewSectionReader(inputStream, 0, contentLength), b2.progressEnabled, b2.options)
+		psr := newProgressSectionReader(io.NewSectionReader(inputStream, 0, contentLength), b2.pr, 0)
 
 		// upload reader contents to S3 bucket as an object with the given key
 		_, err = b2.PutObject(&s3.PutObjectInput{
@@ -404,24 +417,4 @@ func (b2 *B2Backend) RemoveFile(uri *url.URL) error {
 		return handleError(err)
 	}
 	return nil
-}
-
-// GetProgressEnabled return true if progress output is enabled.
-func (b2 *B2Backend) GetProgressEnabled() bool {
-	return b2.progressEnabled
-}
-
-// SetProgressEnabled enable/disable progress output.
-func (b2 *B2Backend) SetProgressEnabled(e bool) {
-	b2.progressEnabled = e
-}
-
-// GetProgressbarOptions returns progressbar options as a list.
-func (b2 *B2Backend) GetProgressbarOptions() []progressbar.Option {
-	return b2.options
-}
-
-// SetProgressbarOptions sets progressbar options (see progressbar docs).
-func (b2 *B2Backend) SetProgressbarOptions(options ...progressbar.Option) {
-	b2.options = options
 }

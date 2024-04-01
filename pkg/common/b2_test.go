@@ -14,8 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-
-	"github.com/schollz/progressbar/v3"
 )
 
 // Define a mock struct for S3 Client.
@@ -205,6 +203,8 @@ func (m *mockS3Client) CreateMultipartUpload(input *s3.CreateMultipartUploadInpu
 	switch *input.Key {
 	case "valid/new/multipart/key", "valid/new/multipart/key/fails/all/parts":
 		return &s3.CreateMultipartUploadOutput{Bucket: input.Bucket, Key: input.Key, UploadId: &expected_multipart_upload_id}, nil
+	case "invalid/server/response":
+		return &s3.CreateMultipartUploadOutput{}, nil
 	case "restricted/new/multipart/key":
 		return &s3.CreateMultipartUploadOutput{}, awserr.New("NotFound", "", nil)
 	}
@@ -280,21 +280,16 @@ func (m *mockS3Client) AbortMultipartUpload(input *s3.AbortMultipartUploadInput)
 func setupB2Backend() *B2Backend {
 	return &B2Backend{
 		&mockS3Client{},
-		false,
-		[]progressbar.Option{},
+		&DummyProgressReporter{},
 	}
 }
 
 /* test cases for progressSectionReader */
 func TestProgressSectionReader(t *testing.T) {
-	options := []progressbar.Option{
-		progressbar.OptionSetWriter(io.Discard),
-	}
-
 	data := []byte("test")
 	sr := io.NewSectionReader(bytes.NewReader(data), 1, 2)
 
-	psr := newProgressSectionReader(sr, true, options)
+	psr := newProgressSectionReader(sr, &DummyProgressReporter{}, 0)
 
 	var m int
 	var n int64
@@ -367,8 +362,7 @@ func TestB2GetFileInfoValidKey(t *testing.T) {
 	// Setup Test
 	mockB2 := &B2Backend{
 		&mockS3Client{},
-		false,
-		[]progressbar.Option{},
+		&DummyProgressReporter{},
 	}
 	mockURI, err := url.ParseRequestURI("b2://test-bucket/valid/key")
 	if err != nil {
@@ -541,9 +535,9 @@ func TestB2StoreFileMultipartValidKey(t *testing.T) {
 	waitfunc = func(time.Duration) {}
 	err = mockB2.StoreFile(&mockReadSeeker{
 		position: 0,
-		length:   test_num_multipart_parts * put_get_object_max_bytes,
+		length:   test_num_multipart_parts * multipart_upload_part_size,
 	},
-		test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+		test_num_multipart_parts*multipart_upload_part_size, mockURI)
 	waitfunc = old_waitfunc
 
 	if err != nil {
@@ -569,9 +563,9 @@ func TestB2StoreFileMultipartValidKeyFailsAllParts(t *testing.T) {
 	waitfunc = func(time.Duration) {}
 	err = mockB2.StoreFile(&mockReadSeeker{
 		position: 0,
-		length:   test_num_multipart_parts * put_get_object_max_bytes,
+		length:   test_num_multipart_parts * multipart_upload_part_size,
 	},
-		test_num_multipart_parts*put_get_object_max_bytes, mockURI)
+		test_num_multipart_parts*multipart_upload_part_size, mockURI)
 	waitfunc = old_waitfunc
 
 	if err == nil {
@@ -596,7 +590,7 @@ func TestB2StoreFileMultipartRestrictedKey(t *testing.T) {
 
 	// Perform the test
 	data := []byte("test")
-	err = mockB2.StoreFile(bytes.NewReader(data), 2*put_get_object_max_bytes, mockURI)
+	err = mockB2.StoreFile(bytes.NewReader(data), 2*multipart_upload_part_size, mockURI)
 
 	if err == nil {
 		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
@@ -621,6 +615,25 @@ func TestB2StoreFileInvalidKey(t *testing.T) {
 		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
 	} else {
 		assertEquals(t, ErrFileNotFound, err.Error(), "err.Error")
+	}
+}
+
+func TestB2StoreFileInvalidServerResponse(t *testing.T) {
+	// Setup Test
+	mockB2 := setupB2Backend()
+	mockURI, err := url.ParseRequestURI("b2://test-bucket/invalid/server/response")
+	if err != nil {
+		t.Fatalf(err.Error())
+	}
+
+	// Perform the test
+	data := []byte("test")
+	err = mockB2.StoreFile(bytes.NewReader(data), 2*multipart_upload_part_size, mockURI)
+
+	if err == nil {
+		t.Fatalf("unexpected test result: StoreFile was supposed to fail")
+	} else {
+		assertEquals(t, "unknown B2 error (multipart upload failed: no upload id found in server response).", err.Error(), "err.Error")
 	}
 }
 

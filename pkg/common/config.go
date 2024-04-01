@@ -12,10 +12,11 @@ import (
 )
 
 // Config struct contains configurations for SQUIRRELUP.
-// Currently it contains two sections:
+// Currently it contains four sections:
 //   - S3 configuration
 //   - Encryption configuration
 //   - Backup configuration
+//   - Internal configuration
 type Config struct {
 	S3 struct {
 		Region string `yaml:"region" env:"SQUIRRELUP_S3_REGION,overwrite" default:""`
@@ -30,6 +31,9 @@ type Config struct {
 		Hours float64 `yaml:"hours" env:"SQUIRRELUP_BACKUP_HOURS,overwrite" default:"240"`
 		Name  string  `yaml:"name" env:"SQUIRRELUP_BACKUP_FILENAME,overwrite" default:"2006-01-02T15-0700"`
 	} `yaml:"backup"`
+	Internal struct {
+		Reporter ProgressReporter
+	}
 }
 
 func setDefaultValueField(valueof reflect.Value, tag string) error {

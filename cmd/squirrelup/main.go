@@ -15,14 +15,20 @@ import (
 	"filippo.io/age"
 	"github.com/breezerider/squirrel-up/pkg/common"
 	"github.com/mholt/archiver/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
-type cliArgs struct {
-	Verbose        bool
-	ConfigFilepath string
-	PositionalArgs []string
-}
+type (
+	cliArgs struct {
+		Verbose        bool
+		ConfigFilepath string
+		PositionalArgs []string
+	}
+
+	progressWriter struct {
+		common.ProgressReporter
+		Index int
+	}
+)
 
 const (
 	appname = "SquirrelUp"
@@ -52,6 +58,12 @@ var (
 	date                  string
 	defaultConfigFilepath string
 )
+
+func (pw *progressWriter) Write(p []byte) (n int, err error) {
+	n = len(p)
+	err = pw.AdvanceTask(pw.Index, int64(n))
+	return
+}
 
 // return the usage string.
 func usageString(name string) string {
@@ -118,6 +130,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("%s", err.Error())
 	}
+	if cli_args.Verbose {
+		cfg.Internal.Reporter = common.NewMultiProgressbarReporter(stdout)
+	}
 
 	/* initialize the backend */
 	if cli_args.Verbose {
@@ -126,9 +141,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	backend, err := common.CreateStorageBackend(outputPrefixUri, &cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create backend: %s", err.Error())
-	}
-	if reporter, ok := backend.(common.ProgressReporterFacade); ok {
-		reporter.SetProgressEnabled(cli_args.Verbose)
 	}
 
 	/* validate output URI */
@@ -161,7 +173,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "generating backup archive...\n")
 	}
 	var outputArchivePath string
-	outputArchivePath, err = archiveDirectory(inputDirectory)
+	outputArchivePath, err = archiveDirectory(inputDirectory, &cfg)
 	if err != nil {
 		_ = os.Remove(outputArchivePath)
 		return fmt.Errorf("%s", err.Error())
@@ -173,7 +185,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if cli_args.Verbose {
 			fmt.Fprintf(stderr, "encrypting backup archive for recipients: %+v\n", recipients)
 		}
-		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, cli_args.Verbose, stdout, stderr)
+		outputEncryptedPath, err = encryptFile(outputArchivePath, recipients, &cfg)
 		if err != nil {
 			_ = os.Remove(outputArchivePath)
 			_ = os.Remove(outputEncryptedPath)
@@ -202,16 +214,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if err == nil {
 			if cli_args.Verbose {
 				fmt.Fprintf(stderr, "uploading backup archive of %q to %q\n", inputDirectory, relativeUri)
-			}
-
-			if reporter, ok := backend.(common.ProgressReporterFacade); ok {
-				reporter.SetProgressbarOptions(
-					progressbar.OptionSetWriter(stdout),
-					progressbar.OptionShowBytes(true),
-					progressbar.OptionClearOnFinish(),
-					progressbar.OptionSetPredictTime(false),
-					progressbar.OptionSetRenderBlankState(true),
-				)
 			}
 
 			var fileInfo os.FileInfo
@@ -360,7 +362,7 @@ func initEncryption(cfg *common.Config, stdout, stderr io.Writer) ([]age.Recipie
 	return recipients, nil
 }
 
-func archiveDirectory(dirPath string) (string, error) {
+func archiveDirectory(dirPath string, cfg *common.Config) (string, error) {
 	// map files on disk to their paths in the archive
 	files, err := archiver.FilesFromDisk(nil, map[string]string{
 		dirPath: "",
@@ -383,9 +385,27 @@ func archiveDirectory(dirPath string) (string, error) {
 	}
 
 	// create the archive
-	err = format.Archive(context.Background(), tmp, files)
+	var index int = 0
+	var archiveOutput io.Writer
+	if cfg.Internal.Reporter != nil {
+		index, _ = cfg.Internal.Reporter.CreateFileTask(-1)
+		_ = cfg.Internal.Reporter.DescribeTask(index, "archiving")
+		archiveOutput = io.MultiWriter(
+			io.Writer(tmp),
+			&progressWriter{
+				cfg.Internal.Reporter,
+				index,
+			},
+		)
+	} else {
+		archiveOutput = io.Writer(tmp)
+	}
+	err = format.Archive(context.Background(), archiveOutput, files)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate archive: %s", err.Error())
+	}
+	if index > 0 {
+		cfg.Internal.Reporter.FinishTask(index)
 	}
 
 	// close the file
@@ -394,7 +414,7 @@ func archiveDirectory(dirPath string) (string, error) {
 	return tmp.Name(), nil
 }
 
-func encryptFile(filePath string, recipients []age.Recipient, progress bool, stdout, stderr io.Writer) (string, error) {
+func encryptFile(filePath string, recipients []age.Recipient, cfg *common.Config) (string, error) {
 	// get input file size
 	fileInfo, err := os.Stat(filepath.Clean(filePath))
 	if err != nil {
@@ -420,19 +440,22 @@ func encryptFile(filePath string, recipients []age.Recipient, progress bool, std
 	}
 
 	// encrypt the file
-	var progressOutput io.Writer = io.Discard
-	if progress {
-		progressOutput = stdout
+	var encryptedOutput io.Writer
+	if cfg.Internal.Reporter != nil {
+		var index int
+		index, _ = cfg.Internal.Reporter.CreateFileTask(fileInfo.Size())
+		_ = cfg.Internal.Reporter.DescribeTask(index, "encrypting")
+		encryptedOutput = io.MultiWriter(
+			encryptedWriter,
+			&progressWriter{
+				cfg.Internal.Reporter,
+				index,
+			},
+		)
+	} else {
+		encryptedOutput = encryptedWriter
 	}
-	bar := progressbar.NewOptions(int(fileInfo.Size()),
-		progressbar.OptionSetWriter(progressOutput),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetDescription("encrypting"),
-		progressbar.OptionClearOnFinish(),
-		progressbar.OptionSetPredictTime(false),
-		progressbar.OptionSetRenderBlankState(true),
-	)
-	numWritten, err := io.Copy(io.MultiWriter(encryptedWriter, bar), input)
+	numWritten, err := io.Copy(encryptedOutput, input)
 	if err != nil {
 		return "", fmt.Errorf("could not write file '%s' to encrypted file '%s': %s", input.Name(), tmp.Name(), err.Error())
 	} else if numWritten == 0 {
